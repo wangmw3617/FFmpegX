@@ -1,0 +1,119 @@
+name: Build FFmpegX
+
+# 触发：推到 main/master、打 v* tag、PR、或手动。
+# 默认走 kit 后端（预编译 ffmpeg-kit AAR），不需要 NDK，CI 只装 JDK + Android SDK。
+on:
+  push:
+    branches: [main, master]
+    tags: ['v*']
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: write   # 发版时需要创建 Release
+
+env:
+  SDK_PLATFORM: "platforms;android-36"
+  SDK_BUILD_TOOLS: "build-tools;36.0.0"
+
+jobs:
+  # ---------- 1. 单元测试（85 个用例：硬件规划 / 命令生成 / 进度解析 / 预设） ----------
+  test:
+    name: Unit tests
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+          cache: gradle
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install SDK packages
+        run: |
+          yes | sdkmanager --licenses >/dev/null 2>&1 || true
+          sdkmanager "$SDK_PLATFORM" "$SDK_BUILD_TOOLS"
+
+      - name: Make gradlew executable
+        run: chmod +x gradlew
+
+      - name: Run unit tests
+        run: ./gradlew testDebugUnitTest --no-daemon
+
+      - name: Upload test report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: unit-test-report
+          path: app/build/reports/tests/testDebugUnitTest
+          if-no-files-found: ignore
+
+  # ---------- 2. 构建 debug APK ----------
+  build:
+    name: Build Debug APK
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+          cache: gradle
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install SDK packages
+        run: |
+          yes | sdkmanager --licenses >/dev/null 2>&1 || true
+          sdkmanager "$SDK_PLATFORM" "$SDK_BUILD_TOOLS"
+
+      - name: Make gradlew executable
+        run: chmod +x gradlew
+
+      - name: Build debug APK
+        run: ./gradlew assembleDebug --no-daemon
+
+      # 只跑 debug 会漏掉 R8 / proguard 的问题（release 才开 minify）。
+      # 这里额外编一个未签名 release 包做验证；首次先设成非阻塞，确认规则齐了再改回阻塞。
+      - name: Build release APK (validates R8 / proguard, unsigned)
+        continue-on-error: true
+        run: ./gradlew assembleRelease --no-daemon
+
+      - name: Upload APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ffmpegx-debug-apk
+          path: app/build/outputs/apk/debug/*.apk
+          if-no-files-found: error
+
+  # ---------- 3. 打 v* tag 时自动发 Release ----------
+  release:
+    name: Release on tag
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download APK
+        uses: actions/download-artifact@v4
+        with:
+          name: ffmpegx-debug-apk
+          path: apk
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: apk/*.apk
+          generate_release_notes: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
