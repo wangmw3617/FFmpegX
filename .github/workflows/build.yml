@@ -114,10 +114,10 @@ jobs:
         continue-on-error: true
         run: ./gradlew assembleRelease --no-daemon
 
-      - name: Upload APK artifact
+      - name: Upload APK artifacts (one per ABI)
         uses: actions/upload-artifact@v4
         with:
-          name: ffmpegx-debug-apk
+          name: ffmpegx-debug-apks
           path: app/build/outputs/apk/debug/*.apk
           if-no-files-found: error
 
@@ -128,16 +128,26 @@ jobs:
     needs: build
     runs-on: ubuntu-latest
     steps:
-      - name: Download APK
+      - name: Download APK artifacts
         uses: actions/download-artifact@v4
         with:
-          name: ffmpegx-debug-apk
+          name: ffmpegx-debug-apks
           path: apk
+
+      # 资产名带上版本号和 ABI，避免 Release 里出现一堆同名的 app-xxx-debug.apk
+      - name: Rename APKs with version
+        run: |
+          mkdir -p out
+          for f in apk/*.apk; do
+            base=$(basename "$f")
+            cp "$f" "out/ffmpegx-${GITHUB_REF_NAME}-${base#app-}"
+          done
+          ls -l out
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          files: apk/*.apk
+          files: out/*.apk
           generate_release_notes: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
