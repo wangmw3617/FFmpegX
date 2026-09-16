@@ -48,10 +48,10 @@ fun ProbeScreen(viewModel: DeviceViewModel = hiltViewModel()) {
             .padding(horizontal = 16.dp, vertical = 12.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
-        if (!device.nativeReady) {
+        if (!device.ffmpegReady) {
             WarningBanner(
                 title = "ffprobe 不可用",
-                message = device.nativeError.ifBlank { "媒体信息依赖 FFmpeg 的 ffprobe，当前后端未能加载。" },
+                message = device.ffmpegError.ifBlank { "媒体信息依赖 ffprobe，当前 FFmpeg 核心未能加载。" },
             )
         }
 

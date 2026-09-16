@@ -4,34 +4,50 @@ import android.content.Context
 import android.net.Uri
 import android.provider.OpenableColumns
 import android.util.Log
+import com.zhiwei.ffmpegx.native.FFmpegNative
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.io.File
 import java.util.UUID
 
 /**
- * 把用户从系统文件选择器拿到的 `content://` Uri 变成 FFmpeg 能用的真实文件路径。
+ * 把用户从系统文件选择器拿到的 `content://` Uri 变成 FFmpeg 能用的输入。
  *
- * 为什么必须做这件事：
- * FFmpeg 需要 `seek()`，而 SAF 给出的管道是不可寻址的，直接传 `/proc/self/fd/N`
- * 在大多数格式上会失败。所以只有两条路——要么解析出真实路径，要么把文件复制到本地。
+ * 有两条路，按代价从低到高：
  *
- * 策略（按代价从低到高）：
- *  1. `file://` 直接取路径；
- *  2. 从 MediaStore / DocumentsProvider 的 `_data` 列解析真实路径（同一分区内的媒体文件通常有效）；
- *  3. 复制到应用缓存目录（一定可行，代价是占用等量空间）。
+ *  1. **`ffkitsaf:` 直读**（FFmpegKitNext 内建协议，见 [FFmpegNative.safParameterForRead]）
+ *     —— 不复制文件、不占额外空间、立刻开始转码。这是现在的首选路径。
+ *  2. **解析真实路径 / 复制到缓存** —— 兜底。当后端不支持 SAF 协议，
+ *     或协议申请失败（例如 Uri 权限已被回收）时使用。
+ *
+ * 历史背景：FFmpeg 需要 `seek()`，而 SAF 给出的管道不可寻址，直接传 `/proc/self/fd/N`
+ * 在大多数格式上会失败。这就是当初必须复制到缓存的原因；FFmpegKitNext 用自己实现的
+ * IOContext 按 fd 做可寻址读写，把这条限制去掉了。
  */
 object FileResolver {
 
     private const val TAG = "FileResolver"
 
+    /**
+     * 解析结果。
+     *
+     * @param ffmpegInput 可直接拼进 ffmpeg 命令行的字符串。
+     *        可能是普通路径，也可能是 `ffkitsaf:...`
+     * @param file 真实文件；走 ffkitsaf 直读且未复制时为 null
+     * @param isTemporary true 表示是复制出来的临时副本，用完应删除
+     * @param safUrl 非空表示使用了 ffkitsaf 协议，该 url 需要在使用后释放
+     */
     data class Resolved(
-        val file: File,
-        /** true 表示是复制出来的临时副本，用完应删除 */
+        val ffmpegInput: String,
+        val file: File?,
         val isTemporary: Boolean,
         val displayName: String,
         val sizeBytes: Long,
-    )
+        val safUrl: String? = null,
+    ) {
+        /** 给 ffprobe / 缩略图等需要真实路径的场景用；走 saf 时返回空 */
+        val realPath: String? get() = file?.absolutePath
+    }
 
     suspend fun resolve(
         context: Context,
@@ -43,20 +59,73 @@ object FileResolver {
                 "file" -> {
                     val f = File(uri.path ?: error("空的 file:// 路径"))
                     require(f.exists()) { "文件不存在：${f.absolutePath}" }
-                    Resolved(f, false, f.name, f.length())
+                    Resolved(f.absolutePath, f, false, f.name, f.length())
                 }
 
-                else -> {
-                    val meta = queryMeta(context, uri)
-                    val direct = queryRealPath(context, uri)
-                    if (direct != null && direct.exists() && direct.canRead()) {
-                        Resolved(direct, false, meta.first ?: direct.name, direct.length())
-                    } else {
-                        copyToCache(context, uri, meta, onProgress)
-                    }
-                }
+                else -> resolveContentUri(context, uri, onProgress)
             }
         }.onFailure { Log.e(TAG, "解析 $uri 失败", it) }
+    }
+
+    /**
+     * content:// 的解析。
+     *
+     * 顺序刻意如此：先试零拷贝的 saf 直读，再试真实路径，最后才复制。
+     * saf 申请成功但命令后来失败的情况不会发生在这里 —— FFmpegKitNext 会用
+     * Uri 对应的 fd 打开文档，失败也会在执行阶段明确报错。
+     */
+    private fun resolveContentUri(
+        context: Context,
+        uri: Uri,
+        onProgress: (Long, Long) -> Unit,
+    ): Resolved {
+        val meta = queryMeta(context, uri)
+
+        // 优先：ffkitsaf: 直读，完全不落地
+        if (FFmpegNative.supportsSaf) {
+            val safUrl = FFmpegNative.safParameterForRead(uri, reusable = false)
+            if (!safUrl.isNullOrBlank()) {
+                Log.i(TAG, "使用 ffkitsaf 直读：$uri")
+                return Resolved(
+                    ffmpegInput = safUrl,
+                    file = null,
+                    isTemporary = false,
+                    displayName = meta.first ?: "input",
+                    sizeBytes = meta.second,
+                    safUrl = null, // reusable=false，由 FFmpegKitNext 在执行结束后自动释放
+                )
+            }
+            Log.w(TAG, "saf 参数申请失败，回退到真实路径 / 复制")
+        }
+
+        // 次选：解析真实路径，不复制
+        val direct = queryRealPath(context, uri)
+        if (direct != null && direct.exists() && direct.canRead()) {
+            return Resolved(
+                ffmpegInput = direct.absolutePath,
+                file = direct,
+                isTemporary = false,
+                displayName = meta.first ?: direct.name,
+                sizeBytes = direct.length(),
+            )
+        }
+
+        // 兜底：复制到应用缓存
+        return copyToCache(context, uri, meta, onProgress)
+    }
+
+    /**
+     * 申请一个可复用的 `ffkitsaf:` 读参数。
+     *
+     * 供「同一个输入被多条命令用到」的场景（例如两遍编码、GIF 的 palettegen/paletteuse，
+     * 或多路 concat）。复用可以避免每遍都重新解析一次 Uri。
+     * **用完必须调用 [releaseSafUrl]。**
+     */
+    fun safInputForReuse(context: Context, uri: Uri): String? =
+        FFmpegNative.safParameterForRead(uri, reusable = true)
+
+    fun releaseSafUrl(url: String?) {
+        if (!url.isNullOrBlank()) FFmpegNative.releaseSafUrl(url)
     }
 
     /** 只查询显示名与大小，不复制。用于 UI 预览。 */
@@ -109,7 +178,6 @@ object FileResolver {
     ): Resolved {
         val (displayName, size) = meta
         val safeName = displayName?.takeIf { it.isNotBlank() } ?: "input_${UUID.randomUUID()}"
-        val ext = safeName.substringAfterLast('.', "").let { if (it.isBlank()) "bin" else it }
         val dir = MediaFiles.workDir(context).let { File(it, "inputs").apply { mkdirs() } }
         val target = File(dir, "${System.currentTimeMillis()}_$safeName")
 
@@ -127,7 +195,13 @@ object FileResolver {
             }
         } ?: error("无法读取所选文件（可能没有授权）")
 
-        return Resolved(target, true, safeName, target.length()).also {
+        return Resolved(
+            ffmpegInput = target.absolutePath,
+            file = target,
+            isTemporary = true,
+            displayName = safeName,
+            sizeBytes = target.length(),
+        ).also {
             Log.i(TAG, "已复制到缓存：${target.absolutePath}（${target.length()} 字节）")
         }
     }
@@ -135,7 +209,9 @@ object FileResolver {
     /** 清理临时副本 */
     fun cleanup(resolved: Resolved?) {
         if (resolved?.isTemporary == true) {
-            runCatching { resolved.file.delete() }
+            runCatching { resolved.file?.delete() }
         }
+        // safUrl 为 null（reusable=false）时不用手动释放，FFmpegKitNext 会自己收尾
+        resolved?.safUrl?.let { releaseSafUrl(it) }
     }
 }

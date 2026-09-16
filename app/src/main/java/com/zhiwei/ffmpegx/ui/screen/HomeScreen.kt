@@ -95,11 +95,11 @@ fun HomeScreen(
             .padding(horizontal = 16.dp, vertical = 12.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
-        if (!device.nativeReady) {
+        if (!device.ffmpegReady) {
             WarningBanner(
-                title = "FFmpeg 后端不可用",
-                message = device.nativeError.ifBlank {
-                    "后端初始化失败。请查看运行日志，或改用其它后端重新构建（gradle.properties 的 ffmpegx.backend）。"
+                title = "FFmpeg 核心不可用",
+                message = device.ffmpegError.ifBlank {
+                    "ffmpeg-kit-next 初始化失败。请查看运行日志，或确认 AAR 包含当前设备的 ABI。"
                 },
             )
         }
@@ -211,8 +211,8 @@ private fun DeviceCapabilityCard(state: DeviceUiState, onRescan: () -> Unit) {
 
         InfoRow("芯片平台", report.soc.displayName)
         InfoRow("档位", report.soc.tier.label)
-        InfoRow("FFmpeg", if (state.nativeReady) state.nativeVersion else "未加载")
-        InfoRow("后端", state.backendName.ifBlank { "—" })
+        InfoRow("FFmpeg", if (state.ffmpegReady) state.ffmpegVersion else "未加载")
+        InfoRow("核心", state.backendName.ifBlank { "—" })
 
         Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
             val hwEncoders = VideoCodec.entries.filter { report.hardwareEncoders(it).isNotEmpty() }
