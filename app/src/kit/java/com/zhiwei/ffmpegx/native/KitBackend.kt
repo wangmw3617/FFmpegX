@@ -64,9 +64,18 @@ internal class KitBackend(
                 true
             } catch (t: Throwable) {
                 errorDetail = buildString {
-                    append(t::class.java.simpleName).append(": ").append(t.message)
-                    append("\n请确认 APK 中包含 arm64-v8a / armeabi-v7a / x86_64 的 libffmpegkit.so，")
-                    append("且当前设备的 ABI 在打包范围内（见 gradle.properties 的 ffmpegx.abis）。")
+                    append(t::class.java.name).append(": ").append(t.message)
+                    // ffmpeg-kit 的 NativeLoader 会把真正的 UnsatisfiedLinkError 挂在 cause 上
+                    // （throw new Error("FFmpegKit failed to start ...", e)）。
+                    // 只打外层消息就只能看到 "failed to start"，看不到 dlopen 的真实原因，所以把 cause 链也带出来。
+                    var cause: Throwable? = t.cause
+                    var depth = 0
+                    while (cause != null && depth < 5) {
+                        append("\n  ← 由 ").append(cause::class.java.name)
+                            .append(" 引起：").append(cause.message)
+                        cause = cause.cause
+                        depth++
+                    }
                 }
                 Log.e(TAG, "ffmpeg-kit 加载失败", t)
                 false
