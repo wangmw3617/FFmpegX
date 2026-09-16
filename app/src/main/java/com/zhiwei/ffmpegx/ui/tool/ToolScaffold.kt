@@ -1,6 +1,8 @@
 package com.zhiwei.ffmpegx.ui.tool
 
+import android.content.Intent
 import android.net.Uri
+import android.util.Log
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Arrangement
@@ -38,6 +40,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.platform.LocalContext
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.zhiwei.ffmpegx.core.cmd.Commands
 import com.zhiwei.ffmpegx.core.model.MediaInfo
@@ -50,14 +53,37 @@ import com.zhiwei.ffmpegx.ui.components.InfoRow
 import com.zhiwei.ffmpegx.ui.components.RunningTaskCard
 import com.zhiwei.ffmpegx.ui.components.SectionCard
 import com.zhiwei.ffmpegx.ui.components.WarningBanner
+import com.zhiwei.ffmpegx.ui.components.displayNameFromInput
+import com.zhiwei.ffmpegx.ui.components.inputSourceLabel
 
 // ============================================================== 通用小工具 ====
 
-/** 统一的文件选择入口：拿到 content Uri 后交给 ViewModel 解析成真实路径 */
+/**
+ * 统一的文件选择入口：拿到 content Uri 后交给 ViewModel 解析。
+ *
+ * 选完会顺手申请**持久化读权限**。不加这一步的话，应用进程被系统回收后
+ * 再回到「队列」页点重跑，Uri 权限已经失效，用户会看到一个莫名其妙的失败。
+ * `OpenDocument` 拿到的 Uri 支持持久化，`GetContent` 不支持 —— 所以这里必须
+ * 用 `OpenDocument`，并且拿到后立刻 take 一次。
+ *
+ * take 失败不影响本次使用（本次的临时授权仍然有效），所以只记日志不打断流程：
+ * 某些提供方（如部分云盘）本来就不授予持久化权限。
+ */
 @Composable
 fun rememberFilePicker(mimeTypes: Array<String>, onPicked: (Uri) -> Unit): () -> Unit {
+    val context = LocalContext.current
     val launcher = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
-        uri?.let(onPicked)
+        if (uri != null) {
+            runCatching {
+                context.contentResolver.takePersistableUriPermission(
+                    uri,
+                    Intent.FLAG_GRANT_READ_URI_PERMISSION,
+                )
+            }.onFailure {
+                Log.i("FilePicker", "该 Uri 不支持持久化授权，本次仍可正常使用：$uri")
+            }
+            onPicked(uri)
+        }
     }
     val key = mimeTypes.toList()
     return remember(key) { { launcher.launch(mimeTypes) } }
@@ -155,13 +181,16 @@ fun InputPickerCard(
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Column(Modifier.weight(1f)) {
                     Text(
-                        form.inputDisplayName.ifBlank { form.inputPath.substringAfterLast('/') },
+                        form.inputDisplayName.ifBlank { displayNameFromInput(form.inputPath) },
                         style = MaterialTheme.typography.bodyMedium,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
                     )
                     Text(
-                        if (form.inputTemporary) "已复制到应用缓存" else form.inputPath,
+                        // 不要直接把 inputPath 显示出来：走 SAF 直读时它是
+                        // ffkitsaf:3.mp4 这种内部协议串，对用户没有意义，
+                        // 看起来还像出了错。换成可理解的状态描述。
+                        inputSourceLabel(form.inputPath, form.inputTemporary),
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         maxLines = 1,
