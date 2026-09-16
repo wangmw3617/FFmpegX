@@ -641,3 +641,28 @@ fun TintedBox(color: Color, modifier: Modifier = Modifier, content: @Composable 
         modifier = modifier.background(color, RoundedCornerShape(8.dp)),
     ) { content() }
 }
+
+// ============================================================ 路径显示工具 ====
+
+/**
+ * 从 ffmpeg 输入串里取一个适合展示给用户的名字。
+ *
+ * 不能直接用 `substringAfterLast('/')`：走 SAF 直读时输入是 `ffkitsaf:3.mp4`
+ * 这类虚拟协议串，里面根本没有 `/`，直接截取会把整个内部串原样显示出来，
+ * 用户看到会以为出了错。
+ */
+fun displayNameFromInput(input: String): String {
+    if (input.isBlank()) return ""
+    if (input.startsWith("ffkit", ignoreCase = true)) return "已选择的文件"
+    return input.substringAfterLast('/').substringAfterLast('\\')
+}
+
+/** 输入来源的一句话说明，用于替代原始路径副标题 */
+fun inputSourceLabel(input: String, temporary: Boolean = false): String = when {
+    input.isBlank() -> ""
+    temporary -> "已复制到应用缓存"
+    input.startsWith("ffkitsaf:", ignoreCase = true) -> "直接读取所选文件（零拷贝）"
+    input.startsWith("ffkitmem:", ignoreCase = true) -> "来自内存数据"
+    input.startsWith("ffkitstream:", ignoreCase = true) -> "来自数据流"
+    else -> input
+}
