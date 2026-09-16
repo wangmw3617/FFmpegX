@@ -170,6 +170,20 @@ class ToolViewModel @Inject constructor(
     private var feature: TaskFeature = TaskFeature.CONVERT
     private var refreshJob: kotlinx.coroutines.Job? = null
 
+    /**
+     * 当前主输入对应的解析结果。
+     *
+     * 持有它是为了**正确释放 SAF url**：ffkitsaf: 是可复用 url，
+     * 上游不会自动回收，必须由我们显式注销。丢掉这个引用就会泄漏
+     * （safIdMap 持续增长，且被注销前的 fd 也占着）。
+     */
+    private var currentInput: FileResolver.Resolved? = null
+
+    override fun onCleared() {
+        super.onCleared()
+        releaseCurrentInput()
+    }
+
     init {
         viewModelScope.launch {
             settingsRepository.settings.collect { settings ->
@@ -228,20 +242,25 @@ class ToolViewModel @Inject constructor(
     fun onPickInput(uri: Uri) {
         viewModelScope.launch {
             _state.update { it.copy(busy = true, busyMessage = "正在读取文件…", error = null) }
+            // 先把上一个输入的 SAF url 释放掉，避免它在 safIdMap 里越积越多
+            releaseCurrentInput()
             val resolved = FileResolver.resolve(context, uri)
             resolved.fold(
                 onSuccess = { r ->
-                    // ffprobe 需要可 seek 的真实路径；走 ffkitsaf 直读时 r.file 为 null，
-                    // 此时先落一份临时副本供探测用（转码本身仍走零拷贝的 ffmpegInput）。
-                    val probeTarget = r.realPath
-                    val info = probeTarget?.let { ffprobe.probe(it).getOrNull() }
+                    // 探测直接用 ffmpegInput。
+                    //
+                    // 之前这里走的是 r.realPath，而走 SAF 直读时 file 为 null、
+                    // realPath 也为 null，于是 `probeTarget?.let{...}` 直接短路，
+                    // info 恒为 null —— 用户看到的就是「ffprobe 解析失败」。
+                    // 实际上 ffkitsaf: 这类虚拟协议本来就能直接交给 ffprobe
+                    // （上游文档：url that can be passed to FFmpegKit or FFprobeKit），
+                    // 完全不需要落地副本。
+                    val probeResult = ffprobe.probe(r.ffmpegInput)
+                    val info = probeResult.getOrNull()
                     _state.update { current ->
                         current.copy(
                             busy = false,
                             form = current.form.copy(
-                                // 注意：这里必须用 ffmpegInput 而不是 file.absolutePath ——
-                                // 走 ffkitsaf 直读时没有真实文件，file 为 null，而 ffmpegInput
-                                // 是 ffkitsaf:<url>，可以直接拼进命令行。
                                 inputPath = r.ffmpegInput,
                                 inputDisplayName = r.displayName,
                                 inputTemporary = r.isTemporary,
@@ -254,8 +273,15 @@ class ToolViewModel @Inject constructor(
                                 videoBitrate = 0,
                                 audioBitrate = current.form.audioBitrate,
                             ),
-                            error = if (info == null) "已载入文件，但 ffprobe 解析失败（原生库可能未构建）" else null,
+                            error = if (info == null) probeFailureMessage(probeResult) else null,
                         )
+                    }
+                    // 只有探测成功才接管这个 url 的生命周期。
+                    // 失败时立刻释放，否则既泄漏又可能让用户反复重选堆积。
+                    if (info != null) {
+                        currentInput = r
+                    } else {
+                        FileResolver.cleanup(r)
                     }
                     refresh()
                 },
@@ -264,6 +290,32 @@ class ToolViewModel @Inject constructor(
                 },
             )
         }
+    }
+
+    /**
+     * 探测失败时把**真实原因**带出来。
+     *
+     * 原来的文案一律是「原生库可能未构建」，但原生库不可用其实在进入本页时
+     * 就已经被拦下（nativeReady 检查）。到这一步还失败，原因通常是文件本身
+     * 读不到或格式不认，把锅推给原生库会让人查错方向。
+     */
+    private fun probeFailureMessage(result: Result<MediaInfo>): String {
+        val cause = result.exceptionOrNull()?.message?.takeIf { it.isNotBlank() }
+        return buildString {
+            append("已载入文件，但无法解析其媒体信息")
+            if (cause != null) {
+                append("：").append(cause)
+            } else {
+                append("（文件可能已损坏，或格式不被支持）")
+            }
+            append("\n可以尝试重新选择文件；若文件在云端，请先下载到本机。")
+        }
+    }
+
+    /** 释放当前输入占用的 SAF url / 临时副本 */
+    private fun releaseCurrentInput() {
+        currentInput?.let { FileResolver.cleanup(it) }
+        currentInput = null
     }
 
     fun onPickExtra(uri: Uri) {
@@ -502,6 +554,12 @@ class ToolViewModel @Inject constructor(
                 val all = (listOf(form.inputPath) + form.extraInputs).filter { it.isNotBlank() }
                 if (all.size < 2) {
                     emptyList()
+                } else if (form.concatUseDemuxer && all.any { isVirtualInput(it) }) {
+                    // concat demuxer 让 libavformat 自己去打开列表里的每个文件，
+                    // 而 ffkitsaf: 是 ffmpeg-kit 在 AVIO 层注册的协议，
+                    // demuxer 的嵌套打开走不到它，必然失败。
+                    // 这种情况直接不生成命令，由 UI 提示用户改用滤镜模式。
+                    emptyList()
                 } else {
                     val listFile = File(MediaFiles.workDir(context), "concat_list.txt")
                     if (form.concatUseDemuxer) {
@@ -737,7 +795,17 @@ class ToolViewModel @Inject constructor(
         val plan = current.plan ?: dryPlan(current)
         val commands = runCatching { buildCommands(current, plan) }.getOrDefault(emptyList())
         if (commands.isEmpty()) {
-            _state.update { it.copy(error = "命令为空，请检查参数是否填写完整") }
+            // 拼接的 demuxer 模式在输入来自系统授权时会生成不出命令，
+            // 这里给出具体原因，而不是笼统的「参数不完整」
+            val concatHint = if (feature == TaskFeature.CONCAT &&
+                (listOf(current.form.inputPath) + current.form.extraInputs).any { isVirtualInput(it) }
+            ) {
+                "拼接的「快速合并（concat demuxer）」不支持来自系统授权的文件，" +
+                    "请改用「滤镜拼接」，或先把片段导入应用目录。"
+            } else {
+                "命令为空，请检查参数是否填写完整"
+            }
+            _state.update { it.copy(error = concatHint) }
             return
         }
 
@@ -779,5 +847,16 @@ class ToolViewModel @Inject constructor(
 /** 便捷判断：当前策略下是否会用到硬件编码器 */
 fun HardwarePlan?.usesHardwareEncoder(): Boolean = this?.encoder is com.zhiwei.ffmpegx.core.hw.EncoderPlan.MediaCodec
 
+/**
+ * 输入是否是 ffmpeg-kit-next 的虚拟协议路径。
+ *
+ * 这类路径由 ffmpeg-kit 在 AVIO 层实现，只在「作为 ffmpeg 的输入参数」时有效。
+ * 需要 libavformat 自己去打开它的场景（如 concat demuxer 的列表文件）走不到，
+ * 必须在生成命令时就避开。
+ */
+private fun isVirtualInput(path: String): Boolean =
+    path.startsWith("ffkitsaf:", ignoreCase = true) ||
+        path.startsWith("ffkitmem:", ignoreCase = true) ||
+        path.startsWith("ffkitstream:", ignoreCase = true)
 /** 让 UI 能直接拿到策略选项 */
 val hwStrategyOptions: List<HwStrategy> = HwStrategy.entries
