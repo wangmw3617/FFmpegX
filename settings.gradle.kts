@@ -12,11 +12,63 @@ pluginManagement {
     }
 }
 
+// =============================================================================
+//  FFmpegKitNext 本地 Maven 仓库
+//
+//  ffmpeg-kit-next 只发源码、不发二进制制品，必须自己构建出 AAR。
+//  构建产物默认落在 <ffmpeg-kit-next>/prebuilt/bundle-android-aar-<api>-maven。
+//
+//  路径解析顺序：
+//    1. gradle.properties / local.properties 里的 ffmpegx.ffmpegKitNextRepo
+//    2. 环境变量 FFMPEGX_FFMPEG_KIT_NEXT_REPO（CI 用）
+//    3. 默认值 ../ffmpeg-kit-next/prebuilt/bundle-android-aar-24-maven
+//
+//  仓库不存在时不会构建失败，但依赖解析会给出明确提示（见 app/build.gradle.kts）。
+// =============================================================================
+
+val ffmpegKitNextRepo: String = run {
+    val localProps = java.util.Properties().apply {
+        val f = file("local.properties")
+        if (f.exists()) f.inputStream().use { load(it) }
+    }
+    // 优先级：命令行 -P / gradle.properties → local.properties → 环境变量 → 默认相对路径
+    val configured = (extra.properties["ffmpegx.ffmpegKitNextRepo"] as String?)
+        ?: localProps.getProperty("ffmpegx.ffmpegKitNextRepo")
+        ?: System.getenv("FFMPEGX_FFMPEG_KIT_NEXT_REPO")
+    val path = configured ?: "../ffmpeg-kit-next/prebuilt/bundle-android-aar-24-maven"
+    // 相对路径按 settings 所在目录（仓库根）解析，避免落到 Gradle 守护进程的 cwd
+    file(path).absolutePath
+}
+
+gradle.settingsEvaluated {
+    logger.lifecycle("FFmpegKitNext 本地仓库 = $ffmpegKitNextRepo")
+    if (!java.io.File(ffmpegKitNextRepo).exists()) {
+        logger.lifecycle(
+            """
+            ┌────────────────────────────────────────────────────────────────────────┐
+            │ 未找到 FFmpegKitNext 本地 Maven 仓库，依赖解析会失败。                  │
+            │ 请先构建（需 Linux / macOS / WSL，Nix 环境）：                          │
+            │   git clone https://github.com/arthenica/ffmpeg-kit-next             │
+            │   ./nix-android.sh -p android-r27d --enable-gpl                       │
+            │ 或设置 ffmpegx.ffmpegKitNextRepo 指向已有产物。详情见                   │
+            │ docs/ffmpeg-kit-next-build.md                                         │
+            └────────────────────────────────────────────────────────────────────────┘
+            """.trimIndent(),
+        )
+    }
+}
+
 dependencyResolutionManagement {
     repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS)
     repositories {
         google()
         mavenCentral()
+        // FFmpegKitNext 的 AAR 与它生成的 POM 都从这里解析
+        maven {
+            url = uri(ffmpegKitNextRepo)
+            // 只让这个仓库负责 ffmpeg-kit-next，避免它参与其它依赖的解析
+            content { includeGroup("com.arthenica") }
+        }
     }
 }
 

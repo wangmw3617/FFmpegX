@@ -10,16 +10,19 @@ plugins {
 }
 
 // =============================================================================
-//  FFmpeg 后端选择
+//  FFmpeg 核心：ffmpeg-kit-next（arthenica 官方续作）
 //
-//  kit    （默认）使用 Maven Central 上的预编译 ffmpeg-kit AAR。
-//                 不需要 NDK、不需要编译 FFmpeg，任何平台都能直接构建。
+//  本工程为**单后端**：只使用 ffmpeg-kit-next。原先的双后端（预编译 AAR /
+//  自研 JNI 编 fftools）已移除，理由：
+//    - ffmpeg-kit-next 不发布二进制，AAR 需自行构建 —— 这本身就替代了「自研编译」
+//      的存在意义，两条编译链并存只会互相增加维护成本；
+//    - 它的 Kotlin API 同时提供结构化进度回调与结构化 ffprobe，
+//      正是原先 native 后端缺失、要靠日志正则去补的两块能力；
+//    - 它内建 ffkitsaf: / ffkitmem: / ffkitstream: 协议，不再需要为 SAF 单独写
+//      「复制到缓存」的兼容层。
 //
-//  native          使用 app/src/main/cpp 下的自研 JNI 层。
-//                 需要先执行 scripts/build-ffmpeg-android.sh（只能在 Linux / macOS / WSL 下跑）。
-//                 切换方式：在 local.properties 或命令行加 -Pffmpegx.backend=native
-//
-//  两个后端在 Kotlin 侧是同一个接口（FfmpegBackend），上层代码完全不用改。
+//  AAR 来源：本地 Maven 仓库，路径由 settings.gradle.kts 解析。
+//  构建方式见 docs/ffmpeg-kit-next-build.md。
 // =============================================================================
 
 val localProps = Properties().apply {
@@ -30,12 +33,14 @@ val localProps = Properties().apply {
 fun prop(key: String, default: String): String =
     (project.findProperty(key) as String?) ?: localProps.getProperty(key) ?: default
 
+val ffmpegAbis = prop("ffmpegx.abis", "arm64-v8a,armeabi-v7a,x86_64")
+    .split(",").map { it.trim() }.filter { it.isNotEmpty() }
+
 // =============================================================================
 //  发布签名
 //
 //  读取顺序：根目录 keystore.properties（本地构建，已 gitignore）→ 环境变量（CI 注入）。
-//  两者都没有时，release 包保持「未签名」，CI 会自动退回发布 debug 包，
-//  这样没有配密钥的人（包括 fork）也能正常构建。
+//  两者都没有时，release 包保持「未签名」，这样没有配密钥的人（包括 fork）也能正常构建。
 // =============================================================================
 
 val keystoreProps = Properties().apply {
@@ -62,41 +67,11 @@ logger.lifecycle(
     },
 )
 
-val requestedBackend = prop("ffmpegx.backend", "kit").lowercase()
-val ffmpegAbis = prop("ffmpegx.abis", "arm64-v8a,armeabi-v7a,x86_64")
-    .split(",").map { it.trim() }.filter { it.isNotEmpty() }
-
-/** 自研 JNI 后端所需的预编译产物是否就绪 */
-val ffmpegPrebuiltReady: Boolean = run {
-    file("src/main/cpp/ffmpeg/include/libavcodec/avcodec.h").exists() &&
-        file("src/main/cpp/fftools/ffmpeg.c").exists() &&
-        ffmpegAbis.all { file("src/main/jniLibs/$it/libavcodec.so").exists() }
-}
-
-val useNativeBackend: Boolean = requestedBackend == "native" && ffmpegPrebuiltReady
-
-if (requestedBackend == "native" && !ffmpegPrebuiltReady) {
-    logger.lifecycle(
-        """
-        ┌──────────────────────────────────────────────────────────────────────┐
-        │ 已请求 native 后端，但 FFmpeg 预编译产物不存在，已自动回退到 kit 后端。│
-        │ 如需 native 后端，请先运行：                                        │
-        │   ./scripts/build-ffmpeg-android.sh --abis ${ffmpegAbis.joinToString(",")}                     │
-        └──────────────────────────────────────────────────────────────────────┘
-        """.trimIndent(),
-    )
-}
-
-logger.lifecycle("FFmpegX backend = ${if (useNativeBackend) "native (自研 JNI)" else "kit (ffmpeg-kit AAR)"}  abis = $ffmpegAbis")
+logger.lifecycle("FFmpegX core = ffmpeg-kit-next ${libs.versions.ffmpegKitNext.get()}  abis = $ffmpegAbis")
 
 android {
     namespace = "com.zhiwei.ffmpegx"
     compileSdk = 36
-
-    // NDK 只在真的要编 C++ 时才声明，否则 AGP 会尝试去下载它
-    if (useNativeBackend) {
-        ndkVersion = "27.2.12479018"
-    }
 
     defaultConfig {
         applicationId = "com.zhiwei.ffmpegx"
@@ -107,26 +82,10 @@ android {
 
         vectorDrawables.useSupportLibrary = true
 
-        if (useNativeBackend) {
-            // 告诉 CMake 编哪些 ABI；kit 后端不编原生代码，交给下面的 splits 控制
-            ndk { abiFilters += ffmpegAbis }
-
-            externalNativeBuild {
-                cmake {
-                    arguments += listOf(
-                        "-DANDROID_STL=c++_shared",
-                        "-DCMAKE_BUILD_TYPE=Release",
-                    )
-                    cppFlags += listOf("-std=c++20", "-fexceptions", "-frtti", "-O2")
-                    cFlags += listOf("-O2", "-fno-strict-aliasing")
-                }
-            }
-        }
-
         buildConfigField(
             "String",
-            "FFMPEG_BACKEND",
-            "\"${if (useNativeBackend) "native" else "kit"}\"",
+            "FFMPEG_KIT_NEXT_VERSION",
+            "\"${libs.versions.ffmpegKitNext.get()}\"",
         )
     }
 
@@ -138,15 +97,6 @@ android {
             reset()
             include(*ffmpegAbis.toTypedArray())
             isUniversalApk = false
-        }
-    }
-
-    if (useNativeBackend) {
-        externalNativeBuild {
-            cmake {
-                path = file("src/main/cpp/CMakeLists.txt")
-                version = "3.22.1+"
-            }
         }
     }
 
@@ -168,7 +118,8 @@ android {
     buildTypes {
         debug {
             isMinifyEnabled = false
-            isJniDebuggable = useNativeBackend
+            // ffmpeg-kit-next 的 .so 是 release 构建的，debug 下也不开 JNI 调试
+            isJniDebuggable = false
         }
         release {
             isMinifyEnabled = true
@@ -193,23 +144,10 @@ android {
         buildConfig = true
     }
 
-    // 两个后端各自编译，互不污染 classpath：
-    //   kit 构建时 AAR 在 classpath 上，native 构建时不在（反之亦然）
-    sourceSets {
-        getByName("main") {
-            if (useNativeBackend) {
-                java.srcDir("src/native/java")
-            } else {
-                java.srcDir("src/kit/java")
-            }
-        }
-    }
-
     packaging {
         jniLibs {
             // 共享库按未压缩方式打包，由系统直接从 APK 加载，避免安装时解压一份副本
             useLegacyPackaging = false
-            // ffmpeg-kit AAR 自带 libc++_shared.so；若同时存在其它来源则取第一个
             pickFirsts += setOf("**/libc++_shared.so")
         }
         resources {
@@ -280,10 +218,9 @@ dependencies {
     implementation(libs.kotlinx.serialization.json)
     implementation(libs.kotlinx.coroutines.android)
 
-    // 只有一个后端会被打进包：kit 走 AAR，native 走自研 JNI
-    if (!useNativeBackend) {
-        implementation(libs.ffmpeg.kit.full)
-    }
+    // FFmpeg 核心（唯一后端）。AAR 从本地 Maven 仓库解析，
+    // 传递依赖 com.arthenica:smart-exception-java 走 mavenCentral。
+    implementation(libs.ffmpeg.kit.next)
 
     testImplementation(libs.junit)
 }
