@@ -94,6 +94,39 @@ app/src/native/java/   自研 JNI 后端
 scripts/               构建脚本
 ```
 
+## 发布签名
+
+发布包使用标准的 Android 签名流程。密钥与口令不入库：本地放在根目录的 `keystore.properties`（已 gitignore），CI 从 GitHub Secrets 注入。
+
+生成密钥库（一次性操作，请妥善备份）：
+
+```bash
+keytool -genkeypair -v -keystore release.keystore \
+  -alias ffmpegx -keyalg RSA -keysize 4096 -validity 10000
+```
+
+本地构建：在根目录新建 `keystore.properties`：
+
+```properties
+storeFile=release.keystore
+storePassword=你的口令
+keyAlias=ffmpegx
+keyPassword=你的口令
+```
+
+CI 构建：在仓库 Settings → Secrets and variables → Actions 添加以下 Secret：
+
+| Secret | 内容 |
+|---|---|
+| `RELEASE_KEYSTORE_BASE64` | `base64 -w0 release.keystore` 的输出 |
+| `RELEASE_STORE_PASSWORD` | 密钥库口令 |
+| `RELEASE_KEY_ALIAS` | 密钥别名（如 `ffmpegx`） |
+| `RELEASE_KEY_PASSWORD` | 密钥口令 |
+
+配置后，CI 会产出签名的 release 包并按架构发布；未配置时自动退回 debug 包。签名默认启用 APK Signature Scheme v1 / v2 / v3。
+
+> 若计划上架 Google Play，建议改用 App Bundle（`bundleRelease`）并开启 Play App Signing：由 Play 持有应用签名密钥，本地仅保留上传密钥，遗失后可申请重置。
+
 ## 许可证
 
 本项目采用 GPL-3.0 许可证。默认后端使用的 ffmpeg-kit-full 包含 libx264 / libx265 等 GPL 组件，依据 FFmpeg 的许可要求，分发链接这些组件的应用须整体以 GPL 兼容许可证发布。若仅使用 LGPL 组件自行编译，可另行选择许可证。
