@@ -179,11 +179,6 @@ class ToolViewModel @Inject constructor(
      */
     private var currentInput: FileResolver.Resolved? = null
 
-    override fun onCleared() {
-        super.onCleared()
-        releaseCurrentInput()
-    }
-
     init {
         viewModelScope.launch {
             settingsRepository.settings.collect { settings ->
@@ -838,8 +833,8 @@ class ToolViewModel @Inject constructor(
     }
 
     override fun onCleared() {
-        // 输入如果是复制到缓存的临时副本，这里不删：用户可能还要重跑。
-        // 缓存目录由系统在空间紧张时自行清理。
+        // 释放 SAF url。临时副本不删：用户可能还要重跑，缓存目录由系统在空间紧张时清理。
+        releaseCurrentInput()
         super.onCleared()
     }
 }
