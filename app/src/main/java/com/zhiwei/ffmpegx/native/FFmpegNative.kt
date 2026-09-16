@@ -1,15 +1,16 @@
 package com.zhiwei.ffmpegx.native
 
 import android.content.Context
+import android.net.Uri
 import android.util.Log
 
 /**
- * 原生层门面。上层只跟它打交道，具体走哪个后端由构建配置决定。
+ * 原生层门面。上层只跟它打交道。
  *
- * 设计要点：
+ * 当前只有一个后端（FFmpegKitNext），但保留了这层门面：
  *  - **可降级**：后端加载失败（.so 缺失 / ABI 不匹配）时不会崩，只把状态记下来，
- *    UI 顶部会显示横幅，其它界面仍可用。
- *  - **串行执行**：FFmpeg CLI 有大量进程级全局状态，同一时刻只允许一个会话。
+ *    UI 会显示提示，其它界面仍可用；
+ *  - **串行执行**：FFmpeg 有大量进程级全局状态，同一时刻只允许一个会话。
  *    队列层（TaskRepository）已经保证串行，这里不再重复加锁。
  */
 object FFmpegNative {
@@ -33,13 +34,13 @@ object FFmpegNative {
 
     /**
      * 必须在 Application.onCreate 里第一时间调用。
-     * 需要 Context 是因为 kit 后端要走 FFmpegKitConfig，native 后端要用 cacheDir 落 ffprobe 输出。
+     * 需要 Context 是因为要创建 FFmpegKitNext 会话与解析 SAF 参数。
      */
     fun initialize(context: Context) {
         if (backend != null) return
         synchronized(this) {
             if (backend != null) return
-            backend = createBackend(context.applicationContext)
+            backend = KitBackend(context.applicationContext)
             Log.i(TAG, "后端已选定：${backend?.displayName}")
         }
     }
@@ -48,7 +49,7 @@ object FFmpegNative {
 
     // ------------------------------------------------------------------ 状态查询 ----
 
-    /** 当前后端标识：kit / native / unknown */
+    /** 当前后端标识 */
     val backendId: String get() = current()?.id ?: "unknown"
 
     /** 当前后端展示名 */
@@ -56,6 +57,9 @@ object FFmpegNative {
 
     /** 是否提供结构化进度统计 */
     val providesStructuredStats: Boolean get() = current()?.providesStructuredStats == true
+
+    /** 后端是否支持直接读写 SAF Uri */
+    val supportsSaf: Boolean get() = current()?.supportsSaf == true
 
     @Synchronized
     fun ensureLoaded(): Boolean {
@@ -86,6 +90,8 @@ object FFmpegNative {
     val isAvailable: Boolean get() = state == State.READY
 
     fun version(): String = versionString
+
+    fun buildInfo(): String = current()?.buildInfo().orEmpty()
 
     fun loadError(): String = errorDetail
 
@@ -123,6 +129,29 @@ object FFmpegNative {
     fun cancel() {
         runCatching { current()?.cancel() }
             .onFailure { Log.w(TAG, "cancel 失败：${it.message}") }
+    }
+
+    // ------------------------------------------------------------------ SAF ----
+
+    /**
+     * SAF Uri -> 可直接给 ffmpeg 用的参数。后端不支持时返回 null，
+     * 调用方应回退到「复制到应用缓存」的老路径。
+     */
+    fun safParameterForRead(uri: Uri, reusable: Boolean = false): String? =
+        runCatching { current()?.safParameterForRead(uri, reusable) }
+            .onFailure { Log.w(TAG, "safParameterForRead 失败：${it.message}") }
+            .getOrNull()
+
+    /** SAF Uri -> 可直接作为输出写入的参数。不支持时返回 null。 */
+    fun safParameterForWrite(uri: Uri): String? =
+        runCatching { current()?.safParameterForWrite(uri) }
+            .onFailure { Log.w(TAG, "safParameterForWrite 失败：${it.message}") }
+            .getOrNull()
+
+    /** 释放可复用的 saf url */
+    fun releaseSafUrl(url: String) {
+        runCatching { current()?.releaseSafUrl(url) }
+            .onFailure { Log.w(TAG, "releaseSafUrl 失败：${it.message}") }
     }
 
     // ------------------------------------------------------------------ 常量 ----

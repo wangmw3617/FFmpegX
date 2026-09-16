@@ -1,17 +1,18 @@
 package com.zhiwei.ffmpegx.native
 
+import android.net.Uri
+
 /**
  * 一次 FFmpeg 统计回调的结构化数据。
  *
- * 只有提供结构化统计的后端才会回调这个（见 [FfmpegBackend.providesStructuredStats]）；
- * 不提供的后端，进度由上层从日志里解析。
+ * 由 FFmpegKitNext 的 `StatisticsCallback` 直接提供，不需要从日志里正则解析。
  */
 data class RawStats(
     val frame: Long,
     val fps: Double,
     val quality: Double,
     val sizeBytes: Long,
-    /** 毫秒。注意 ffmpeg-kit 的 Statistics.getTime() 单位是毫秒 */
+    /** 毫秒。注意 FFmpegKitNext 的 Statistics.time 单位是毫秒（Double） */
     val timeMs: Double,
     val bitrateKbps: Double,
     val speed: Double,
@@ -20,15 +21,12 @@ data class RawStats(
 /**
  * FFmpeg 执行后端。
  *
- * 目前有两个实现，编译期二选一（见 app/build.gradle.kts 的 ffmpegx.backend）：
+ * 目前只有一个实现：[KitBackend]（基于 FFmpegKitNext）。保留这层接口是因为：
+ *  - 它把「第三方 FFmpeg 封装库」与「上层业务」隔开，换库时改动被限制在这一层；
+ *  - 单测可以用假实现替换它，不必真的加载 .so；
+ *  - 将来若要接别的 FFmpeg 发行版，仍有明确的位置可落。
  *
- *  - **kit**：Maven Central 上的预编译 ffmpeg-kit AAR（FFmpeg 8.1.1 Full）。
- *    零编译依赖，任何平台都能直接构建 APK。提供结构化进度统计与结构化 ffprobe。
- *
- *  - **native**：app/src/main/cpp 下的自研 JNI 层，直接编译 FFmpeg 的 fftools。
- *    可以精确控制编译选项，但需要先在 Linux / macOS / WSL 上跑交叉编译脚本。
- *
- * 两者都执行**同一条 ffmpeg 命令行**，所以上层的命令生成（Commands）与
+ * 所有实现都执行**同一条 ffmpeg 命令行**，所以上层的命令生成（Commands）与
  * 硬件加速规划（HardwarePlanner）完全不需要区分后端。
  */
 interface FfmpegBackend {
@@ -45,8 +43,13 @@ interface FfmpegBackend {
     /** 幂等加载，可在任意线程调用 */
     fun ensureLoaded(): Boolean
 
+    /** FFmpeg 版本号，如 "9.0.1" */
     fun version(): String
 
+    /** 更详细的构建信息（库版本 / ABI / minSdk），用于诊断；不支持时返回空串 */
+    fun buildInfo(): String = ""
+
+    /** 加载失败的原因，成功时为空串 */
     fun loadError(): String
 
     /**
@@ -66,11 +69,33 @@ interface FfmpegBackend {
     /**
      * 对文件跑一次 ffprobe，返回**原始 JSON 文本**。
      *
-     * 统一返回 JSON 而不是结构化对象，是为了让两个后端共用同一套解析逻辑，
+     * 统一返回 JSON 而不是结构化对象，是为了让上层的解析逻辑只写一份，
      * 也让「媒体信息」页能原样展示 ffprobe 的完整输出。
      */
     suspend fun probeJson(path: String): Result<String>
 
     /** 请求取消当前会话 */
     fun cancel()
+
+    // ---------------------------------------------------------------- SAF 支持 ----
+
+    /**
+     * 把 SAF Uri 转成可直接传给 ffmpeg 的参数（FFmpegKitNext 的 `ffkitsaf:` 协议）。
+     *
+     * 默认返回 null，表示该后端不支持直读 SAF —— 调用方应回退到「复制到缓存」的路径。
+     */
+    fun safParameterForRead(uri: Uri, reusable: Boolean): String? = null
+
+    /**
+     * 把 SAF Uri 转成可直接作为输出写入的参数。
+     *
+     * 默认返回 null，表示不支持直写 —— 调用方应回退到「写到缓存再复制回去」的路径。
+     */
+    fun safParameterForWrite(uri: Uri): String? = null
+
+    /** 释放 [safParameterForRead]（reusable=true 时）申请的资源 */
+    fun releaseSafUrl(url: String) {}
+
+    /** 该后端是否支持直接读写 SAF Uri，省掉缓存中转 */
+    val supportsSaf: Boolean get() = false
 }
