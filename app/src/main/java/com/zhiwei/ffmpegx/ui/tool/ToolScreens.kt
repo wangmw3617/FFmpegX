@@ -46,6 +46,7 @@ import com.zhiwei.ffmpegx.ui.components.DropdownField
 import com.zhiwei.ffmpegx.ui.components.InfoRow
 import com.zhiwei.ffmpegx.ui.components.LabeledSlider
 import com.zhiwei.ffmpegx.ui.components.SectionCard
+import com.zhiwei.ffmpegx.ui.components.displayNameFromInput
 import com.zhiwei.ffmpegx.ui.theme.MonospaceStyle
 
 // ================================================================ 格式转换 ====
@@ -378,8 +379,8 @@ fun ConcatScreen(vm: ToolViewModel = hiltViewModel()) {
 
         SectionCard(title = "待拼接片段（按顺序）") {
             Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                (listOf(f.inputDisplayName.ifBlank { f.inputPath.substringAfterLast('/') }) +
-                    f.extraInputs.map { it.substringAfterLast('/') })
+                (listOf(f.inputDisplayName.ifBlank { displayNameFromInput(f.inputPath) }) +
+                    f.extraInputs.map { displayNameFromInput(it) })
                     .forEachIndexed { index, name ->
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             Text(
@@ -488,7 +489,7 @@ fun SubtitleScreen(vm: ToolViewModel = hiltViewModel()) {
                         }
                     } else {
                         Text(
-                            f.subtitlePath.substringAfterLast('/'),
+                            displayNameFromInput(f.subtitlePath),
                             style = MaterialTheme.typography.bodyMedium,
                         )
                         TextButton(onClick = pickSub) { Text("重新选择") }
@@ -515,7 +516,7 @@ fun SubtitleScreen(vm: ToolViewModel = hiltViewModel()) {
                             Text("选择字幕文件")
                         }
                     } else {
-                        Text(f.subtitlePath.substringAfterLast('/'), style = MaterialTheme.typography.bodyMedium)
+                        Text(displayNameFromInput(f.subtitlePath), style = MaterialTheme.typography.bodyMedium)
                         TextButton(onClick = pickSub) { Text("重新选择") }
                     }
                 }
@@ -573,7 +574,7 @@ fun OverlayScreen(vm: ToolViewModel = hiltViewModel()) {
             } else {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Text(
-                        f.overlayPath.substringAfterLast('/'),
+                        displayNameFromInput(f.overlayPath),
                         style = MaterialTheme.typography.bodyMedium,
                         modifier = Modifier.weight(1f),
                         maxLines = 1,
