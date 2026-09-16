@@ -108,42 +108,6 @@ class TaskRepository @Inject constructor(
         }
     }
 
-    /**
-     * SAF url 注册表：命令里出现过的 `ffkitsaf:` url -> 引用它的任务 id 集合。
-     *
-     * 为什么放在这里而不是 ViewModel：任务在 Application 作用域里串行执行，
-     * 且可能排很久才轮到。ViewModel 随时可能被销毁（用户退出页面），
-     * 由它持有 url 会在任务还没开始时就把它释放掉。
-     *
-     * 引用计数而不是单值：同一个输入可能被多个任务共用（例如先导出音频再转视频）。
-     */
-    private val safUrlRefs = mutableMapOf<String, MutableSet<Long>>()
-
-    /** 登记一个 SAF url 被某个任务引用 */
-    @Synchronized
-    private fun retainSafUrls(taskId: Long, commands: List<List<String>>) {
-        commands.flatten()
-            .filter { it.startsWith(SAF_PROTOCOL_PREFIX, ignoreCase = true) }
-            .forEach { url -> safUrlRefs.getOrPut(url) { mutableSetOf() }.add(taskId) }
-    }
-
-    /**
-     * 任务结束时释放它引用的 SAF url（引用计数归零才真正注销）。
-     */
-    @Synchronized
-    private fun releaseSafUrls(taskId: Long) {
-        val iter = safUrlRefs.iterator()
-        while (iter.hasNext()) {
-            val (url, ids) = iter.next()
-            ids.remove(taskId)
-            if (ids.isEmpty()) {
-                iter.remove()
-                runCatching { FFmpegNative.releaseSafUrl(url) }
-                    .onFailure { Log.w(TAG, "释放 saf url 失败：$url") }
-            }
-        }
-    }
-
     /** 全量任务列表（新到旧） */
     val allTasks: StateFlow<List<TaskEntity>> = dao.observeAll()
         .stateIn(appScope, SharingStarted.Eagerly, emptyList())
