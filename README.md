@@ -30,20 +30,19 @@ SoC 实际开放的 MediaCodec 能力，自动选择硬解 / 硬编通路。
 ./scripts/build-apk.sh --backend native       # 改用自研 JNI（需先跑 build-ffmpeg-android.sh）
 ```
 
-装到手机：
+装到手机（本地构建后）：
 
 ```bash
-adb install -r dist/app-debug.apk
+adb install -r dist/ffmpegx-1.0.0-debug-arm64.apk
 ```
 
-### 已经构建好的产物
+### 构建产物（APK）
 
-仓库里的 `dist/` 目录已经放了两个可直接安装的 debug 包：
+源码仓库**不收录 APK 二进制**（见 `.gitignore`）。`dist/` 下的包由两种方式产出：
 
-| 文件 | 大小 | 适用 |
-|---|---|---|
-| `ffmpegx-1.0.0-debug-arm64.apk` | ~46MB | **推荐**，覆盖 2018 年之后几乎所有手机 |
-| `ffmpegx-1.0.0-debug-all-abi.apk` | ~124MB | 含 armeabi-v7a（老 32 位机）+ x86_64（模拟器） |
+- **GitHub Actions 自动构建**：推送后到仓库 **Actions** 页查看 `Build FFmpegX` 任务，
+  产物在 artifact `ffmpegx-debug-apk`；打 `v*` tag 会自动发 GitHub Release。
+- **本地构建**：`./scripts/build-apk.sh`，产物落在 `dist/`。
 
 两者都未签名（debug 签名），可直接侧载安装。
 
