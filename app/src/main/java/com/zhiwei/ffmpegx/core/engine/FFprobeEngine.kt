@@ -33,6 +33,14 @@ import javax.inject.Singleton
 @Singleton
 class FFprobeEngine @Inject constructor() {
 
+    companion object {
+        /**
+         * ffmpeg-kit-next 提供的虚拟协议。这些"路径"由 native 层实现，
+         * 直接按 fd 读写，不能也不应做文件系统校验。
+         */
+        private val VIRTUAL_PROTOCOLS = listOf("ffkitsaf:", "ffkitmem:", "ffkitstream:")
+    }
+
     private val json = Json {
         ignoreUnknownKeys = true
         isLenient = true
@@ -41,14 +49,33 @@ class FFprobeEngine @Inject constructor() {
 
     suspend fun probe(path: String): Result<MediaInfo> = withContext(Dispatchers.IO) {
         runCatching {
-            val file = File(path)
-            require(file.exists()) { "文件不存在：$path" }
+            // ffmpeg-kit-next 的虚拟协议（ffkitsaf: / ffkitmem: / ffkitstream:）不是
+            // 文件系统路径，File(path) 既 exists() 不到也没有意义 —— 但它们**可以**
+            // 直接传给 FFprobeKit，上游 getSafParameter 的文档明确写着
+            // "url that can be passed to FFmpegKit or FFprobeKit"。
+            // 之前这里无条件 require(file.exists())，把 SAF 直读路径整个挡死了：
+            // 用户选完文件必然看到「ffprobe 解析失败」，转码也就无从谈起。
+            val virtual = isVirtualProtocol(path)
+            val file = if (virtual) null else File(path)
+            if (file != null) {
+                require(file.exists()) { "文件不存在：$path" }
+            }
 
             // 两个后端都返回同样结构的 ffprobe JSON，解析逻辑完全共用
             val json = FFmpegNative.probeJson(path).getOrElse { throw it }
             parse(json, path, file)
         }
     }
+
+    /**
+     * 是否是 ffmpeg-kit-next 的虚拟协议路径。
+     *
+     * 这类路径交给 native 层按 fd 打开，不需要（也不能）做文件系统校验。
+     * 判断前缀而不是 `contains`：真实文件名里出现 `ffkitsaf:` 理论上可能，
+     * 但那必然是相对路径，不会以协议名开头。
+     */
+    private fun isVirtualProtocol(path: String): Boolean =
+        VIRTUAL_PROTOCOLS.any { path.startsWith(it, ignoreCase = true) }
 
     /** 解析 ffprobe 的 JSON。字段缺失是常态（尤其字幕流），全部走安全取值。 */
     fun parse(text: String, path: String, file: File? = null): MediaInfo {
@@ -107,7 +134,9 @@ class FFprobeEngine @Inject constructor() {
 
         return MediaInfo(
             path = path,
-            fileName = file?.name ?: path.substringAfterLast('/'),
+            // 虚拟协议路径形如 ffkitsaf:3.mp4，用它当文件名对用户没有意义。
+            // 这种情况下一律交给调用方用 inputDisplayName 覆盖展示。
+            fileName = file?.name ?: displayNameFor(path),
             fileSizeBytes = file?.length()
                 ?: format.long("size")
                 ?: 0L,
@@ -123,6 +152,13 @@ class FFprobeEngine @Inject constructor() {
     }
 
     // ------------------------------------------------------------- 解析小工具 ----
+
+    /**
+     * 虚拟协议路径没有文件名可用，返回空串（而不是把 `ffkitsaf:3.mp4` 当名字显示出来）。
+     * 调用方在 inputDisplayName 非空时会优先使用它。
+     */
+    private fun displayNameFor(path: String): String =
+        if (isVirtualProtocol(path)) "" else path.substringAfterLast('/')
 
     private fun JsonObject?.str(key: String): String? =
         this?.get(key)?.let { runCatching { it.jsonPrimitive.content }.getOrNull() }
