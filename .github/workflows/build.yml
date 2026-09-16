@@ -105,20 +105,55 @@ jobs:
       - name: Make gradlew executable
         run: chmod +x gradlew
 
+      # 从 GitHub Secrets 还原 keystore。没配置就跳过，后续退回发布 debug 包。
+      - name: Configure release signing
+        id: signing
+        env:
+          KEYSTORE_B64: ${{ secrets.RELEASE_KEYSTORE_BASE64 }}
+          STORE_PW: ${{ secrets.RELEASE_STORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.RELEASE_KEY_ALIAS }}
+          KEY_PW: ${{ secrets.RELEASE_KEY_PASSWORD }}
+        run: |
+          if [ -n "$KEYSTORE_B64" ]; then
+            echo "$KEYSTORE_B64" | base64 -d > release.keystore
+            {
+              echo "RELEASE_STORE_FILE=release.keystore"
+              echo "RELEASE_STORE_PASSWORD=$STORE_PW"
+              echo "RELEASE_KEY_ALIAS=$KEY_ALIAS"
+              echo "RELEASE_KEY_PASSWORD=$KEY_PW"
+            } >> "$GITHUB_ENV"
+            echo "signed=yes" >> "$GITHUB_OUTPUT"
+            echo "已配置签名密钥，将构建签名 release 包"
+          else
+            echo "signed=no" >> "$GITHUB_OUTPUT"
+            echo "未配置签名密钥：release 包不签名，发布时改用 debug 包"
+          fi
+
       - name: Build debug APK
         run: ./gradlew assembleDebug --no-daemon
 
-      # 只跑 debug 会漏掉 R8 / proguard 的问题（release 才开 minify）。
-      # 这里额外编一个未签名 release 包做验证；首次先设成非阻塞，确认规则齐了再改回阻塞。
-      - name: Build release APK (validates R8 / proguard, unsigned)
-        continue-on-error: true
+      # 同时构建 release（顺带验证 R8 / proguard；有密钥时即为签名包）
+      - name: Build release APK
         run: ./gradlew assembleRelease --no-daemon
+
+      # 有签名就发布 release 包，否则发布 debug 包
+      - name: Select APKs to publish
+        run: |
+          mkdir -p publish
+          if [ "${{ steps.signing.outputs.signed }}" = "yes" ]; then
+            cp app/build/outputs/apk/release/*.apk publish/ 2>/dev/null || true
+          fi
+          if [ -z "$(ls -A publish 2>/dev/null)" ]; then
+            cp app/build/outputs/apk/debug/*.apk publish/
+          fi
+          echo "将发布的包："
+          ls -l publish
 
       - name: Upload APK artifacts (one per ABI)
         uses: actions/upload-artifact@v4
         with:
-          name: ffmpegx-debug-apks
-          path: app/build/outputs/apk/debug/*.apk
+          name: ffmpegx-apks
+          path: publish/*.apk
           if-no-files-found: error
 
   # ---------- 3. 打 v* tag 时自动发 Release ----------
@@ -131,7 +166,7 @@ jobs:
       - name: Download APK artifacts
         uses: actions/download-artifact@v4
         with:
-          name: ffmpegx-debug-apks
+          name: ffmpegx-apks
           path: apk
 
       # 资产名带上版本号和 ABI，避免 Release 里出现一堆同名的 app-xxx-debug.apk
