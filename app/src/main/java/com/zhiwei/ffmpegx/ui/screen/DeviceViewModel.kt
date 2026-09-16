@@ -25,12 +25,15 @@ import javax.inject.Inject
 
 data class DeviceUiState(
     val report: DeviceCodecReport? = null,
-    val nativeReady: Boolean = false,
-    val nativeVersion: String = "unknown",
-    val nativeError: String = "",
-    /** 当前使用的 FFmpeg 后端（kit 预编译包 / 自研 JNI） */
+    val ffmpegReady: Boolean = false,
+    val ffmpegVersion: String = "unknown",
+    val ffmpegBuildInfo: String = "",
+    val ffmpegError: String = "",
+    /** 当前使用的 FFmpeg 核心（ffmpeg-kit-next） */
     val backendName: String = "",
     val backendId: String = "",
+    /** 是否支持 SAF 直读直写（省掉缓存中转） */
+    val supportsSaf: Boolean = false,
     val scanning: Boolean = false,
 )
 
@@ -64,11 +67,13 @@ class DeviceViewModel @Inject constructor(
             val ready = FFmpegNative.ensureLoaded()
             _device.update {
                 it.copy(
-                    nativeReady = ready,
-                    nativeVersion = FFmpegNative.version(),
-                    nativeError = if (ready) "" else FFmpegNative.loadError(),
+                    ffmpegReady = ready,
+                    ffmpegVersion = FFmpegNative.version(),
+                    ffmpegBuildInfo = FFmpegNative.buildInfo(),
+                    ffmpegError = if (ready) "" else FFmpegNative.loadError(),
                     backendName = FFmpegNative.backendName,
                     backendId = FFmpegNative.backendId,
+                    supportsSaf = FFmpegNative.supportsSaf,
                 )
             }
             scan()
@@ -90,28 +95,50 @@ class DeviceViewModel @Inject constructor(
             val resolved = FileResolver.resolve(context, uri)
             resolved.fold(
                 onSuccess = { r ->
-                    val result = ffprobe.probe(r.file.absolutePath)
-                    result.fold(
-                        onSuccess = { info ->
-                            _probe.update {
-                                it.copy(
-                                    busy = false,
-                                    info = info,
-                                    rawJson = info.rawJson,
-                                    fileName = r.displayName,
-                                )
-                            }
-                        },
-                        onFailure = { t ->
-                            _probe.update { it.copy(busy = false, error = "解析失败：${t.message}") }
-                        },
-                    )
+                    // ffprobe 需要可 seek 的真实路径。若走的是 ffkitsaf 直读（没有落地文件），
+                    // 就先落一份临时副本供探测用，探测完即删 —— 转码本身仍然走零拷贝路径。
+                    val probeTarget = r.realPath
+                    if (probeTarget == null) {
+                        probeViaCache(uri, r.displayName)
+                        return@fold
+                    }
+                    runProbe(probeTarget, r.displayName)
                 },
                 onFailure = { t ->
                     _probe.update { it.copy(busy = false, error = "读取文件失败：${t.message}") }
                 },
             )
         }
+    }
+
+    /** 没有真实路径时（ffkitsaf 直读），复制一份副本给 ffprobe 用，探测完即删 */
+    private suspend fun probeViaCache(uri: Uri, displayName: String) {
+        val dir = MediaFiles.workDir(context).let { File(it, "probe").apply { mkdirs() } }
+        val target = File(dir, "probe_${System.currentTimeMillis()}_$displayName")
+        try {
+            context.contentResolver.openInputStream(uri)?.use { input ->
+                target.outputStream().use { output -> input.copyTo(output, DEFAULT_BUFFER_SIZE) }
+            } ?: error("无法读取所选文件（可能没有授权）")
+            runProbe(target.absolutePath, displayName)
+        } catch (t: Throwable) {
+            _probe.update { it.copy(busy = false, error = "解析失败：${t.message}") }
+        } finally {
+            // 探测用完立即删除，不占空间
+            runCatching { target.delete() }
+        }
+    }
+
+    private suspend fun runProbe(path: String, displayName: String) {
+        ffprobe.probe(path).fold(
+            onSuccess = { info ->
+                _probe.update {
+                    it.copy(busy = false, info = info, rawJson = info.rawJson, fileName = displayName)
+                }
+            },
+            onFailure = { t ->
+                _probe.update { it.copy(busy = false, error = "解析失败：${t.message}") }
+            },
+        )
     }
 
     /** 把当前素材导出到系统媒体库，方便在相册里看到 */

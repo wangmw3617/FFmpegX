@@ -7,7 +7,6 @@ import com.zhiwei.ffmpegx.native.RawStats
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.NonCancellable
-import kotlinx.coroutines.channels.ProducerScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.channelFlow
@@ -40,10 +39,12 @@ sealed interface TranscodeEvent {
 /**
  * 单次 FFmpeg 会话的执行器。
  *
- * 关键约束（来自 C 层设计）：
- *  - 同一时刻只允许一个会话在跑，C 层用互斥锁串行化，这里也不再并发发起；
- *  - 取消是通过向执行线程 raise(SIGINT) 触发的，属于「协作式中断」，
- *    因此取消后必须等底层真正退出，否则下一个任务会被上一个的残留状态污染。
+ * 进度来源：FFmpegKitNext 的 `StatisticsCallback`（结构化），
+ * 因此不再需要从日志里正则解析。`ProgressParser` 仅作为兜底保留 ——
+ * 万一将来换成不提供结构化统计的后端，或在日志里发现了统计行也能用上。
+ *
+ * 取消：走 `session.cancel()`，属于协作式中断，取消后必须等底层真正退出，
+ * 否则下一个任务可能被上一个的残留状态污染（FFmpeg 有进程级全局状态）。
  */
 @Singleton
 class FFmpegEngine @Inject constructor() {
@@ -60,8 +61,7 @@ class FFmpegEngine @Inject constructor() {
         val lastEmitAt = AtomicLong(0L)
         val errorTail = ArrayDeque<String>()
 
-        // 只有提供结构化统计的后端才走 StatisticsCallback；
-        // 其它后端（自研 JNI）从日志的统计行里解析，见 ProgressParser
+        // 当前后端是否提供结构化统计
         val structuredStats = FFmpegNative.providesStructuredStats
 
         fun emitProgress(p: TranscodeProgress, force: Boolean = false) {
@@ -84,6 +84,7 @@ class FFmpegEngine @Inject constructor() {
 
             trySend(TranscodeEvent.Log(level, message))
 
+            // 兜底：结构化统计不可用时，才从日志里解析进度
             if (!structuredStats && ProgressParser.looksLikeProgress(message)) {
                 ProgressParser.parse(message, progressRef.get())?.let { emitProgress(it) }
             }
@@ -97,7 +98,7 @@ class FFmpegEngine @Inject constructor() {
                         fps = raw.fps,
                         quality = raw.quality,
                         outputBytes = raw.sizeBytes,
-                        // ffmpeg-kit 的 Statistics.getTime() 是毫秒
+                        // FFmpegKitNext 的 Statistics.time 单位是毫秒，内部统一用微秒
                         timeUs = (raw.timeMs * 1000.0).toLong(),
                         bitrateKbps = raw.bitrateKbps,
                         speed = raw.speed,
@@ -151,8 +152,8 @@ class FFmpegEngine @Inject constructor() {
     /** 把退出码 + 错误尾巴翻译成一句人话 */
     private fun humanize(code: Int, tail: List<String>): String = when (code) {
         FFmpegNative.EXIT_NATIVE_MISSING ->
-            "FFmpeg 后端不可用：${FFmpegNative.loadError().take(200)}"
-        FFmpegNative.EXIT_INTERNAL -> "原生调用异常"
+            "FFmpeg 不可用：${FFmpegNative.loadError().take(200)}"
+        FFmpegNative.EXIT_INTERNAL -> "FFmpeg 调用异常"
 
         else -> buildString {
             append("FFmpeg 退出码 ").append(code)

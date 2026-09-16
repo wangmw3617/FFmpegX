@@ -26,7 +26,6 @@ import com.zhiwei.ffmpegx.core.hw.HwStrategy
 import com.zhiwei.ffmpegx.core.hw.VideoCodec
 import com.zhiwei.ffmpegx.core.settings.AppSettings
 import com.zhiwei.ffmpegx.core.settings.ThemeMode
-import com.zhiwei.ffmpegx.native.FFmpegNative
 import com.zhiwei.ffmpegx.ui.components.ChoiceChips
 import com.zhiwei.ffmpegx.ui.components.DropdownField
 import com.zhiwei.ffmpegx.ui.components.InfoRow
@@ -69,7 +68,8 @@ fun SettingsScreen(viewModel: SettingsViewModel = hiltViewModel()) {
 
             SwitchRow(
                 title = "启用 Vulkan 滤镜链",
-                subtitle = "把缩放/格式转换交给 GPU，仅对纯缩放场景生效，且需要 FFmpeg 编译时开启 --enable-vulkan",
+                subtitle = "把缩放/格式转换交给 GPU。注意：ffmpeg-kit-next 默认构建**未开启** --enable-vulkan，" +
+                    "开启本项前请确认你的 AAR 构建时加了该选项，否则滤镜会直接报错。",
                 checked = settings.preferVulkan,
                 onCheckedChange = { viewModel.setPreferVulkan(it) },
             )
@@ -146,14 +146,14 @@ fun SettingsScreen(viewModel: SettingsViewModel = hiltViewModel()) {
         // -------------------------------------------------------------- 关于 ----
         SectionCard(title = "关于") {
             InfoRow("FFmpeg", nativeLabel)
-            InfoRow("执行后端", device?.let { FFmpegNative.backendName } ?: "—")
+            InfoRow("执行核心", device?.backendName ?: "—")
+            InfoRow("SAF 直读直写", if (device?.supportsSaf == true) "支持" else "回退缓存中转")
             InfoRow("应用版本", "1.0.0")
             InfoRow("包名", "com.zhiwei.ffmpegx")
             Text(
-                "两个可选后端执行的是同一条 ffmpeg 命令行：" +
-                    "kit 用 Maven Central 上的预编译 ffmpeg-kit（FFmpeg 8.1.1），" +
-                    "native 用本项目自编译的 FFmpeg fftools。" +
-                    "所有处理都在本机完成，不联网。",
+                "FFmpeg 核心为 ffmpeg-kit-next（arthenica 官方续作，FFmpeg 9.x），" +
+                    "执行的是原样的 ffmpeg 命令行，并支持 SAF 直读直写 —— " +
+                    "选中的文件不必先复制到缓存。所有处理均在本机完成，不联网。",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )

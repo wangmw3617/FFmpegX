@@ -1,188 +1,396 @@
-name: Build FFmpegX
+name: Build
 
-# 触发：推到 main/master、打 v* tag、PR、或手动。
-# 默认走 kit 后端（预编译 ffmpeg-kit AAR），不需要 NDK，CI 只装 JDK + Android SDK。
 on:
   push:
-    branches: [main, master]
+    branches: [main]
     tags: ['v*']
   pull_request:
+    branches: [main]
   workflow_dispatch:
 
 permissions:
-  contents: write   # 发版时需要创建 Release
+  contents: write
 
 env:
-  SDK_PLATFORM: "platforms;android-36"
-  SDK_BUILD_TOOLS: "build-tools;36.0.0"
+  # ffmpeg-kit-next 的版本（与 gradle/libs.versions.toml 保持一致）
+  FFMPEG_KIT_NEXT_VERSION: '9.0.0'
+  # 构建 AAR 时用的 Nix profile
+  FFMPEG_KIT_NEXT_NIX_PROFILE: 'android-r27d'
+  # FFmpegX 打包的 ABI（与 gradle.properties 的 ffmpegx.abis 一致）
+  FFMPEGX_ABIS: 'arm64-v8a,armeabi-v7a,x86_64'
 
 jobs:
-  # ---------- 1. 单元测试（85 个用例：硬件规划 / 命令生成 / 进度解析 / 预设） ----------
+  # ===========================================================================
+  #  ffmpeg-kit-next AAR
+  #
+  #  它不发布二进制制品，必须现场构建。单独抽成一个 job 是因为 test 与 build
+  #  都依赖这个产物 —— 编译期要用到它的类型，没有 AAR 连编译都过不去。
+  #  两级缓存：Maven 产物（命中即完全跳过）+ Nix store（加速未命中时的构建）。
+  # ===========================================================================
+  ffmpeg-kit-next:
+    name: Build ffmpeg-kit-next AAR
+    runs-on: ubuntu-latest
+    steps:
+      # 缓存 key 里不能出现逗号：actions/cache 会直接报
+      # "Key Validation Error: ... cannot contain commas" 并让整个 job 失败。
+      # 所以这里先把 ABI 列表转成无逗号的形式。
+      - name: Normalize ABI list
+        id: abis
+        shell: bash
+        run: |
+          SLUG="$(echo "${FFMPEGX_ABIS}" | tr -d ' ' | tr ',' '_')"
+          echo "slug=${SLUG}" >> "$GITHUB_OUTPUT"
+          echo "缓存键里的 ABI 片段 = ${SLUG}"
+
+      - name: Cache AAR
+        id: aar-cache
+        uses: actions/cache@v4
+        with:
+          path: ${{ github.workspace }}/prebuilt
+          key: ffmpegkitnext-${{ env.FFMPEG_KIT_NEXT_VERSION }}-${{ steps.abis.outputs.slug }}-${{ runner.os }}
+          restore-keys: ffmpegkitnext-${{ env.FFMPEG_KIT_NEXT_VERSION }}-
+
+      - name: Install Nix
+        if: steps.aar-cache.outputs.cache-hit != 'true'
+        uses: cachix/install-nix-action@v30
+        with:
+          nix_path: nixpkgs=channel:nixos-unstable
+          extra_nix_config: |
+            experimental-features = nix-command flakes
+            access-tokens = github.com=${{ secrets.GITHUB_TOKEN }}
+
+      - name: Cache Nix store
+        if: steps.aar-cache.outputs.cache-hit != 'true'
+        uses: actions/cache@v4
+        with:
+          path: /nix/store
+          key: nix-store-${{ env.FFMPEG_KIT_NEXT_NIX_PROFILE }}-${{ runner.os }}
+
+      - name: Clone ffmpeg-kit-next
+        if: steps.aar-cache.outputs.cache-hit != 'true'
+        run: |
+          git clone --depth 1 https://github.com/arthenica/ffmpeg-kit-next.git \
+            "${GITHUB_WORKSPACE}/src"
+
+      # 由 FFMPEGX_ABIS 推导 --disable-arch-*：
+      # 上游支持的 Android 架构名是 arm-v7a / arm-v7a-neon / arm64-v8a / x86 / x86_64，
+      # 而 FFMPEGX_ABIS 用的是 Android 侧的名字（armeabi-v7a）。写死反而容易与
+      # gradle.properties 的 ffmpegx.abis 脱节，所以在这里算出来。
+      - name: Build AAR
+        if: steps.aar-cache.outputs.cache-hit != 'true'
+        working-directory: ${{ github.workspace }}/src
+        shell: bash
+        run: |
+          # Android ABI -> 上游架构名
+          UPSTREAM_ARCHS=""
+          IFS=',' read -ra WANTED <<< "${FFMPEGX_ABIS}"
+          for abi in "${WANTED[@]}"; do
+            abi="$(echo "$abi" | xargs)"
+            case "$abi" in
+              arm64-v8a)    UPSTREAM_ARCHS="${UPSTREAM_ARCHS} arm64-v8a" ;;
+              armeabi-v7a)  UPSTREAM_ARCHS="${UPSTREAM_ARCHS} arm-v7a" ;;
+              x86)          UPSTREAM_ARCHS="${UPSTREAM_ARCHS} x86" ;;
+              x86_64)       UPSTREAM_ARCHS="${UPSTREAM_ARCHS} x86_64" ;;
+              *)            echo "::error::不支持的 ABI：$abi"; exit 1 ;;
+            esac
+          done
+          echo "上游架构名：${UPSTREAM_ARCHS}"
+
+          DISABLE=()
+          for arch in arm-v7a arm-v7a-neon arm64-v8a x86 x86_64; do
+            KEEP=no
+            for want in ${UPSTREAM_ARCHS}; do
+              [ "$arch" = "$want" ] && KEEP=yes && break
+            done
+            [ "$KEEP" = no ] && DISABLE+=("--disable-arch-${arch}")
+          done
+          echo "跳过的架构：${DISABLE[*]:-无}"
+
+          # --enable-gpl 是必须的：不开就没有 libx264/libx265，
+          # FFmpegX 的「兼容优先」（全软编码）策略会失效。
+          ./nix-android.sh \
+            -p "${FFMPEG_KIT_NEXT_NIX_PROFILE}" \
+            --api-level=24 \
+            "${DISABLE[@]}" \
+            --enable-gpl \
+            --enable-lib-x264 \
+            --enable-lib-x265
+
+          # 归拢到一个稳定路径，方便缓存与下游 job 引用
+          mkdir -p "${GITHUB_WORKSPACE}/prebuilt"
+          cp -r prebuilt/bundle-android-aar-24-maven/. "${GITHUB_WORKSPACE}/prebuilt/"
+
+      - name: Verify AAR
+        shell: bash
+        run: |
+          AAR="$(find "${GITHUB_WORKSPACE}/prebuilt" -name '*.aar' | head -1)"
+          if [ -z "${AAR}" ]; then
+            echo "::error::没有产出 AAR"
+            exit 1
+          fi
+          ls -lh "${AAR}"
+
+          echo "--- AAR 内包含的 ABI ---"
+          # AAR 的 jni 目录按 jni/<abi>/ 存放，把它列出来核对
+          unzip -l "${AAR}" | awk '$4 ~ /^jni\// { split($4, p, "/"); print p[2] }' | sort -u | tee /tmp/aar-abis.txt
+
+          # 这个检查是「软」的：libx264/libx265 有可能是静态链进 libavcodec.so 的，
+          # 此时按文件名 grep 不到。真失败的信号在构建期的 "Invalid configuration
+          # detected: GPL library x264 enabled without --enable-gpl flag"。
+          # 这里只做提示，不 fail —— 误报会挡住一次 40 分钟的构建。
+          echo "--- 尝试确认 GPL 库 ---"
+          unzip -l "${AAR}" | grep -Ei 'x264|x265' \
+            || echo "::notice::未按文件名找到 libx264/libx265，可能已静态链接进 libavcodec.so；建议装机后用「媒体信息」页确认 H.264 软编可用"
+
+      - name: Upload AAR repository
+        uses: actions/upload-artifact@v4
+        with:
+          name: ffmpeg-kit-next-maven
+          path: ${{ github.workspace }}/prebuilt
+          # AAR 只在本次 run 的两个下游 job 用，3 天足够，也不占长期配额
+          retention-days: 3
+          if-no-files-found: error
+
+  # ===========================================================================
+  #  单元测试
+  #
+  #  命令生成（Commands）与硬件加速规划（HardwarePlanner）都是纯逻辑，
+  #  但编译期仍然要解析 ffmpeg-kit-next 的类型，所以依赖上面的 AAR。
+  # ===========================================================================
   test:
     name: Unit tests
     runs-on: ubuntu-latest
+    needs: ffmpeg-kit-next
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
       - name: Set up JDK 21
         uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: '21'
-          cache: gradle
 
-      # 不再依赖 android-actions/setup-android（其 v3 在 Node24 runner 上会失败）。
-      # ubuntu-latest 自带 Android SDK；有 cmdline-tools 就直接用，没有才下载。
+      - name: Download AAR
+        uses: actions/download-artifact@v4
+        with:
+          name: ffmpeg-kit-next-maven
+          path: ${{ github.workspace }}/kit-next-repo
+
       - name: Set up Android SDK
         run: |
-          set -e
-          SDK="${ANDROID_SDK_ROOT:-/usr/local/lib/android/sdk}"
-          SDKMGR="$(ls "$SDK"/cmdline-tools/*/bin/sdkmanager 2>/dev/null | head -n1 || true)"
-          if [ -z "$SDKMGR" ]; then
-            echo "cmdline-tools 不存在，下载安装…"
-            mkdir -p "$SDK/cmdline-tools"
-            curl -sSL -o /tmp/cmdtools.zip https://dl.google.com/android/repository/commandlinetools-linux-11076708_latest.zip
-            unzip -q /tmp/cmdtools.zip -d /tmp/cmdtools
-            mv /tmp/cmdtools/cmdline-tools "$SDK/cmdline-tools/latest"
-            SDKMGR="$SDK/cmdline-tools/latest/bin/sdkmanager"
+          SDK_ROOT="${ANDROID_SDK_ROOT:-/usr/local/lib/android/sdk}"
+          echo "ANDROID_SDK_ROOT=${SDK_ROOT}" >> "$GITHUB_ENV"
+          echo "ANDROID_HOME=${SDK_ROOT}" >> "$GITHUB_ENV"
+          mkdir -p "${SDK_ROOT}/cmdline-tools"
+          if [ ! -d "${SDK_ROOT}/cmdline-tools/latest" ]; then
+            curl -fsSL -o /tmp/cmdline-tools.zip \
+              https://dl.google.com/android/repository/commandlinetools-linux-11076708_latest.zip
+            unzip -q /tmp/cmdline-tools.zip -d /tmp/cmdline-tools
+            mv /tmp/cmdline-tools/cmdline-tools "${SDK_ROOT}/cmdline-tools/latest"
           fi
-          echo "ANDROID_SDK_ROOT=$SDK" >> "$GITHUB_ENV"
-          echo "ANDROID_HOME=$SDK" >> "$GITHUB_ENV"
-          echo "using sdkmanager: $SDKMGR"
-          yes | "$SDKMGR" --licenses >/dev/null 2>&1 || true
-          "$SDKMGR" "$SDK_PLATFORM" "$SDK_BUILD_TOOLS"
+          echo "${SDK_ROOT}/cmdline-tools/latest/bin" >> "$GITHUB_PATH"
 
-      - name: Make gradlew executable
-        run: chmod +x gradlew
+      - name: Install SDK packages
+        run: |
+          yes | sdkmanager --licenses > /dev/null 2>&1 || true
+          sdkmanager "platforms;android-36" "build-tools;36.0.0" > /dev/null
+
+      - name: Cache Gradle
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          key: gradle-test-${{ runner.os }}-${{ hashFiles('**/*.gradle.kts', 'gradle/libs.versions.toml') }}
+          restore-keys: gradle-test-${{ runner.os }}-
 
       - name: Run unit tests
-        run: ./gradlew testDebugUnitTest --no-daemon
+        env:
+          FFMPEGX_FFMPEG_KIT_NEXT_REPO: ${{ github.workspace }}/kit-next-repo
+        run: ./gradlew testDebugUnitTest --no-daemon --stacktrace
 
       - name: Upload test report
-        if: always()
+        if: failure()
         uses: actions/upload-artifact@v4
         with:
           name: unit-test-report
-          path: app/build/reports/tests/testDebugUnitTest
+          path: app/build/reports/tests/
+          retention-days: 7
           if-no-files-found: ignore
 
-  # ---------- 2. 构建 debug APK ----------
+  # ===========================================================================
+  #  构建 APK
+  # ===========================================================================
   build:
-    name: Build Debug APK
-    needs: test
+    name: Build APKs
     runs-on: ubuntu-latest
+    needs: [ffmpeg-kit-next, test]
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
       - name: Set up JDK 21
         uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: '21'
-          cache: gradle
+
+      - name: Download AAR
+        uses: actions/download-artifact@v4
+        with:
+          name: ffmpeg-kit-next-maven
+          path: ${{ github.workspace }}/kit-next-repo
 
       - name: Set up Android SDK
         run: |
-          set -e
-          SDK="${ANDROID_SDK_ROOT:-/usr/local/lib/android/sdk}"
-          SDKMGR="$(ls "$SDK"/cmdline-tools/*/bin/sdkmanager 2>/dev/null | head -n1 || true)"
-          if [ -z "$SDKMGR" ]; then
-            echo "cmdline-tools 不存在，下载安装…"
-            mkdir -p "$SDK/cmdline-tools"
-            curl -sSL -o /tmp/cmdtools.zip https://dl.google.com/android/repository/commandlinetools-linux-11076708_latest.zip
-            unzip -q /tmp/cmdtools.zip -d /tmp/cmdtools
-            mv /tmp/cmdtools/cmdline-tools "$SDK/cmdline-tools/latest"
-            SDKMGR="$SDK/cmdline-tools/latest/bin/sdkmanager"
+          SDK_ROOT="${ANDROID_SDK_ROOT:-/usr/local/lib/android/sdk}"
+          echo "ANDROID_SDK_ROOT=${SDK_ROOT}" >> "$GITHUB_ENV"
+          echo "ANDROID_HOME=${SDK_ROOT}" >> "$GITHUB_ENV"
+          mkdir -p "${SDK_ROOT}/cmdline-tools"
+          if [ ! -d "${SDK_ROOT}/cmdline-tools/latest" ]; then
+            curl -fsSL -o /tmp/cmdline-tools.zip \
+              https://dl.google.com/android/repository/commandlinetools-linux-11076708_latest.zip
+            unzip -q /tmp/cmdline-tools.zip -d /tmp/cmdline-tools
+            mv /tmp/cmdline-tools/cmdline-tools "${SDK_ROOT}/cmdline-tools/latest"
           fi
-          echo "ANDROID_SDK_ROOT=$SDK" >> "$GITHUB_ENV"
-          echo "ANDROID_HOME=$SDK" >> "$GITHUB_ENV"
-          echo "using sdkmanager: $SDKMGR"
-          yes | "$SDKMGR" --licenses >/dev/null 2>&1 || true
-          "$SDKMGR" "$SDK_PLATFORM" "$SDK_BUILD_TOOLS"
+          echo "${SDK_ROOT}/cmdline-tools/latest/bin" >> "$GITHUB_PATH"
 
-      - name: Make gradlew executable
-        run: chmod +x gradlew
-
-      # 从 GitHub Secrets 还原 keystore。没配置就跳过，后续退回发布 debug 包。
-      - name: Configure release signing
-        id: signing
-        env:
-          KEYSTORE_B64: ${{ secrets.RELEASE_KEYSTORE_BASE64 }}
-          STORE_PW: ${{ secrets.RELEASE_STORE_PASSWORD }}
-          KEY_ALIAS: ${{ secrets.RELEASE_KEY_ALIAS }}
-          KEY_PW: ${{ secrets.RELEASE_KEY_PASSWORD }}
+      - name: Install SDK packages
         run: |
-          if [ -n "$KEYSTORE_B64" ]; then
-            echo "$KEYSTORE_B64" | base64 -d > release.keystore
-            {
-              echo "RELEASE_STORE_FILE=release.keystore"
-              echo "RELEASE_STORE_PASSWORD=$STORE_PW"
-              echo "RELEASE_KEY_ALIAS=$KEY_ALIAS"
-              echo "RELEASE_KEY_PASSWORD=$KEY_PW"
-            } >> "$GITHUB_ENV"
-            echo "signed=yes" >> "$GITHUB_OUTPUT"
-            echo "已配置签名密钥，将构建签名 release 包"
+          yes | sdkmanager --licenses > /dev/null 2>&1 || true
+          sdkmanager "platforms;android-36" "build-tools;36.0.0" > /dev/null
+
+      - name: Cache Gradle
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          key: gradle-build-${{ runner.os }}-${{ hashFiles('**/*.gradle.kts', 'gradle/libs.versions.toml') }}
+          restore-keys: gradle-build-${{ runner.os }}-
+
+      # tag 形如 v1.0.3 -> 1.0.3，传给 Gradle 作为 versionName。
+      # 非 tag 触发（main / PR）时留空，Gradle 用自己的默认值。
+      - name: Resolve version
+        id: version
+        shell: bash
+        run: |
+          if [[ "${GITHUB_REF}" == refs/tags/v* ]]; then
+            VERSION="${GITHUB_REF_NAME#v}"
           else
-            echo "signed=no" >> "$GITHUB_OUTPUT"
-            echo "未配置签名密钥：release 包不签名，发布时改用 debug 包"
+            VERSION=""
           fi
+          echo "name=${VERSION}" >> "$GITHUB_OUTPUT"
+          echo "versionName = ${VERSION:-（未指定，用 Gradle 默认值）}"
 
-      - name: Build debug APK
-        run: ./gradlew assembleDebug --no-daemon
-
-      # 同时构建 release（顺带验证 R8 / proguard；有密钥时即为签名包）
-      - name: Build release APK
-        run: ./gradlew assembleRelease --no-daemon
-
-      # 有签名就发布 release 包，否则发布 debug 包
-      - name: Select APKs to publish
+      - name: Restore release keystore
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          KEYSTORE_BASE64: ${{ secrets.RELEASE_KEYSTORE_BASE64 }}
         run: |
-          mkdir -p publish
-          if [ "${{ steps.signing.outputs.signed }}" = "yes" ]; then
-            cp app/build/outputs/apk/release/*.apk publish/ 2>/dev/null || true
+          if [ -z "${KEYSTORE_BASE64}" ]; then
+            echo "::error::未配置 RELEASE_KEYSTORE_BASE64，无法产出签名包"
+            exit 1
           fi
-          if [ -z "$(ls -A publish 2>/dev/null)" ]; then
-            cp app/build/outputs/apk/debug/*.apk publish/
+          echo "${KEYSTORE_BASE64}" | base64 -d > "${GITHUB_WORKSPACE}/release.jks"
+          if [ ! -s "${GITHUB_WORKSPACE}/release.jks" ]; then
+            echo "::error::release.jks 解码后为空，RELEASE_KEYSTORE_BASE64 可能不是合法的 base64"
+            exit 1
           fi
-          echo "将发布的包："
-          ls -l publish
+          echo "RELEASE_STORE_FILE=${GITHUB_WORKSPACE}/release.jks" >> "$GITHUB_ENV"
+          echo "已恢复签名密钥（$(stat -c%s "${GITHUB_WORKSPACE}/release.jks") 字节）"
 
-      - name: Upload APK artifacts (one per ABI)
+      - name: Build debug APKs
+        env:
+          FFMPEGX_FFMPEG_KIT_NEXT_REPO: ${{ github.workspace }}/kit-next-repo
+          FFMPEGX_VERSION_NAME: ${{ steps.version.outputs.name }}
+        run: ./gradlew assembleDebug --no-daemon --stacktrace
+
+      - name: Build release APKs
+        env:
+          FFMPEGX_FFMPEG_KIT_NEXT_REPO: ${{ github.workspace }}/kit-next-repo
+          FFMPEGX_VERSION_NAME: ${{ steps.version.outputs.name }}
+          RELEASE_STORE_PASSWORD: ${{ secrets.RELEASE_STORE_PASSWORD }}
+          RELEASE_KEY_ALIAS: ${{ secrets.RELEASE_KEY_ALIAS }}
+          RELEASE_KEY_PASSWORD: ${{ secrets.RELEASE_KEY_PASSWORD }}
+        run: ./gradlew assembleRelease --no-daemon --stacktrace
+
+      # Release 包必须真的签名了 —— 没签名的话 Gradle 会静默产出
+      # app-*-release-unsigned.apk，装不上，而且要到用户手里才被发现。
+      - name: Verify APK signatures
+        if: startsWith(github.ref, 'refs/tags/v')
+        shell: bash
+        run: |
+          set -e
+          SIGNED="$(find app/build/outputs/apk/release -name '*-release.apk' 2>/dev/null | wc -l)"
+          UNSIGNED="$(find app/build/outputs/apk/release -name '*unsigned*.apk' 2>/dev/null | wc -l)"
+          echo "已签名 APK: ${SIGNED} 个；未签名 APK: ${UNSIGNED} 个"
+          find app/build/outputs/apk/release -name '*.apk' -exec ls -lh {} \;
+          if [ "${SIGNED}" -eq 0 ]; then
+            echo "::error::没有产出已签名的 release APK（签名配置未生效）"
+            exit 1
+          fi
+          if [ "${UNSIGNED}" -gt 0 ]; then
+            echo "::error::存在未签名 APK，签名密钥未正确应用"
+            exit 1
+          fi
+          # 用 apksigner 复核第一份产物，确认 v2/v3 签名真的在
+          APKSIGNER="$(find "${ANDROID_SDK_ROOT}/build-tools" -name apksigner | sort -V | tail -1)"
+          FIRST="$(find app/build/outputs/apk/release -name '*-release.apk' | head -1)"
+          "${APKSIGNER}" verify --print-certs "${FIRST}"
+
+      - name: Collect APKs
+        run: |
+          mkdir -p artifacts
+          find app/build/outputs/apk -name '*.apk' -exec cp {} artifacts/ \;
+          ls -lh artifacts/
+
+      - name: Upload APKs
         uses: actions/upload-artifact@v4
         with:
           name: ffmpegx-apks
-          path: publish/*.apk
+          path: artifacts/*.apk
+          retention-days: 7
           if-no-files-found: error
 
-  # ---------- 3. 打 v* tag 时自动发 Release ----------
+  # ===========================================================================
+  #  发布（仅 v* tag）
+  # ===========================================================================
   release:
-    name: Release on tag
-    if: startsWith(github.ref, 'refs/tags/v')
-    needs: build
+    name: Publish release
     runs-on: ubuntu-latest
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/v')
     steps:
-      - name: Download APK artifacts
+      - name: Download APKs
         uses: actions/download-artifact@v4
         with:
           name: ffmpegx-apks
-          path: apk
+          path: apks
 
-      # 资产名带上版本号和 ABI，避免 Release 里出现一堆同名的 app-xxx-debug.apk
-      - name: Rename APKs with version
+      # 命名沿用 v1.0.0 / v1.0.1 的既有格式，便于对照升级：
+      #   ffmpegx-v1.0.3-arm64-v8a-release.apk
+      - name: Rename with version
+        shell: bash
         run: |
-          mkdir -p out
-          for f in apk/*.apk; do
-            base=$(basename "$f")
-            cp "$f" "out/ffmpegx-${GITHUB_REF_NAME}-${base#app-}"
+          set -e
+          VERSION="${GITHUB_REF_NAME#v}"
+          cd apks
+          for f in *.apk; do
+            # app-arm64-v8a-release.apk -> ffmpegx-v1.0.3-arm64-v8a-release.apk
+            ABIVAR="$(echo "$f" | sed -E 's/^app-(.+)-(debug|release)\.apk$/\1/')"
+            BUILDVAR="$(echo "$f" | sed -E 's/^app-.+-(debug|release)\.apk$/\1/')"
+            if [ "$ABIVAR" = "$f" ] || [ "$BUILDVAR" = "$f" ]; then
+              echo "::error::无法从文件名解析 ABI 与构建类型：$f"
+              exit 1
+            fi
+            mv "$f" "ffmpegx-v${VERSION}-${ABIVAR}-${BUILDVAR}.apk"
           done
-          ls -l out
+          ls -lh
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          files: out/*.apk
+          files: apks/*.apk
           generate_release_notes: true
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          draft: false
+          prerelease: ${{ contains(github.ref_name, '-') }}
