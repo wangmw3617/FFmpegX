@@ -35,7 +35,8 @@ object FileResolver {
      *        可能是普通路径，也可能是 `ffkitsaf:...`
      * @param file 真实文件；走 ffkitsaf 直读且未复制时为 null
      * @param isTemporary true 表示是复制出来的临时副本，用完应删除
-     * @param safUrl 非空表示使用了 ffkitsaf 协议，该 url 需要在使用后释放
+     * @param safUrl 非空表示使用了 ffkitsaf 协议。该 url 是 reusable 的，
+     *        **必须在整个流程结束时通过 [cleanup] 释放**，否则会泄漏
      */
     data class Resolved(
         val ffmpegInput: String,
@@ -73,6 +74,9 @@ object FileResolver {
      * 顺序刻意如此：先试零拷贝的 saf 直读，再试真实路径，最后才复制。
      * saf 申请成功但命令后来失败的情况不会发生在这里 —— FFmpegKitNext 会用
      * Uri 对应的 fd 打开文档，失败也会在执行阶段明确报错。
+     *
+     * 注意 saf 分支用的是 reusable url：探测与转码是两次独立会话，
+     * 自动注销的 url 撑不过第一次。释放由调用方在流程结束时负责。
      */
     private fun resolveContentUri(
         context: Context,
@@ -83,16 +87,24 @@ object FileResolver {
 
         // 优先：ffkitsaf: 直读，完全不落地
         if (FFmpegNative.supportsSaf) {
-            val safUrl = FFmpegNative.safParameterForRead(uri, reusable = false)
+            // 必须用 reusable = true。
+            //
+            // 上游语义：reusable=false 表示「文件关闭时自动注销该 url」。
+            // 但本应用对同一个输入至少要开两次会话 —— 先 ffprobe 探测拿时长/分辨率，
+            // 再 ffmpeg 真正转码。第一次会话一结束 url 就被注销，第二次必然
+            // 「找不到 SAF id」而失败。因此这里申请可复用 url，由调用方在
+            // 整个流程结束后通过 [cleanup]（或 [releaseSafUrl]）显式释放。
+            val safUrl = FFmpegNative.safParameterForRead(uri, reusable = true)
             if (!safUrl.isNullOrBlank()) {
-                Log.i(TAG, "使用 ffkitsaf 直读：$uri")
+                Log.i(TAG, "使用 ffkitsaf 直读：$uri -> $safUrl")
                 return Resolved(
                     ffmpegInput = safUrl,
                     file = null,
                     isTemporary = false,
                     displayName = meta.first ?: "input",
                     sizeBytes = meta.second,
-                    safUrl = null, // reusable=false，由 FFmpegKitNext 在执行结束后自动释放
+                    // 记录 url 以便 cleanup 释放；reusable=true 时上游不会自动回收
+                    safUrl = safUrl,
                 )
             }
             Log.w(TAG, "saf 参数申请失败，回退到真实路径 / 复制")
@@ -206,12 +218,18 @@ object FileResolver {
         }
     }
 
-    /** 清理临时副本 */
+    /**
+     * 清理临时副本，并释放 SAF url。
+     *
+     * **调用时机很重要**：saf url 现在是 reusable=true 的，探测与转码都要用它，
+     * 所以必须等**整个流程结束**（转码完成或被取消）后再调用，
+     * 不能在探测结束后就释放，否则转码会「找不到 SAF id」。
+     */
     fun cleanup(resolved: Resolved?) {
         if (resolved?.isTemporary == true) {
             runCatching { resolved.file?.delete() }
         }
-        // safUrl 为 null（reusable=false）时不用手动释放，FFmpegKitNext 会自己收尾
+        // reusable=true 的 url 上游不会自动回收，必须手动注销，否则 safIdMap 会持续增长
         resolved?.safUrl?.let { releaseSafUrl(it) }
     }
 }
