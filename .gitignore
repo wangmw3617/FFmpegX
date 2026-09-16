@@ -23,3 +23,8 @@ local.properties
 /dist/
 *.apk
 /.gradle/
+
+# 发布签名 —— 密钥与口令绝不入库
+keystore.properties
+*.jks
+*.keystore
