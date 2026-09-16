@@ -5,80 +5,95 @@
 ![minSdk 24](https://img.shields.io/badge/minSdk-24-green.svg)
 ![targetSdk 36](https://img.shields.io/badge/targetSdk-36-green.svg)
 
-手机上用的 FFmpeg 图形前端。把 ffmpeg 那套命令行包成能点的界面，顺便在运行时挑出设备真正支持的硬件编解码。
+FFmpegX 是一个面向 Android 平台的 FFmpeg 图形前端。它将 FFmpeg 的命令行能力封装为移动端界面，并在运行时依据设备实际支持的 MediaCodec 编解码能力，自动选择硬件加速方案。
 
-Kotlin + Jetpack Compose，最低 Android 7.0，目标 Android 16。
+- 技术栈：Kotlin + Jetpack Compose（Material 3）
+- 版本要求：最低 Android 7.0（API 24），目标 Android 16（API 36）
 
-## 编译
+## 构建
 
 ```bash
 ./scripts/build-apk.sh
 ```
 
-脚本会自己下 Android SDK 和 Gradle，跑完把 APK 放到 `dist/`。工具链都在 `.toolchain/` 下，想重来删掉就行。Windows 上双击 `build-apk.cmd` 也一样。
+该脚本会自动完成 Android SDK 与 Gradle 的下载安装，并将生成的 APK 输出至 `dist/` 目录。全部工具链位于项目的 `.toolchain/` 目录下，删除后可重新初始化。Windows 环境下可直接运行 `build-apk.cmd`。
 
-也可以交给 GitHub Actions：推代码或打 `v*` 标签就自动跑测试、出包；打标签还会顺手发 Release（每个 CPU 架构一个 APK）。需要 JDK 17+，其余都自动装。
+构建亦可交由 GitHub Actions 完成：推送代码或创建 `v*` 标签会触发自动测试与打包流程，创建标签时还会自动发布 Release（按 CPU 架构分别提供 APK）。本地构建需要 JDK 17 或更高版本，其余依赖均由脚本自动安装。
 
 ## 硬件加速
 
-不靠查表猜芯片，直接问系统：把设备上的 MediaCodec 全枚举一遍，看哪些能硬解硬编、能顶到多大分辨率和帧率。
+本项目不依据 SoC 型号推断能力，而是在运行时枚举设备上的全部 MediaCodec 编解码器，读取其支持的分辨率、帧率与码率范围，据此决定解码与编码方案。
 
-规划方案时有几条死规矩，都是踩过坑总结出来的：
+方案规划遵循以下规则：
 
-1. 想零拷贝（`-hwaccel_output_format mediacodec`），后面就不能挂任何 CPU 滤镜，编码器也得是 MediaCodec，否则一定报格式转换失败。
-2. 只写 `-hwaccel mediacodec`、不写 output_format 最稳，FFmpeg 会把帧拉回内存，滤镜随便用。
-3. 硬编有分辨率和帧率上限，超了就老老实实回退软编。
+1. 使用零拷贝（`-hwaccel_output_format mediacodec`）时，输出侧不得包含任何 CPU 滤镜，且编码器必须为 MediaCodec，否则会触发格式转换错误。
+2. 仅指定 `-hwaccel mediacodec`（不指定 output_format）时，FFmpeg 会将帧回传至系统内存，此时 CPU 滤镜可正常使用，兼容性最佳。
+3. 硬件编码器对分辨率与帧率存在上限，超出范围时回退至软件编码。
 
-界面给了四种策略：智能、速度优先、质量优先、兼容优先。质量优先 = 硬解 + 软编。
+界面提供四种策略：智能、速度优先、质量优先、兼容优先。其中「质量优先」采用硬件解码配合软件编码。
 
-## 两种 FFmpeg 接法
+## FFmpeg 集成方式
 
-上层代码不关心用哪种，因为跑的是同一条 ffmpeg 命令，差别只在谁来执行。
+上层代码不区分后端，因为两种方式执行的是同一条 ffmpeg 命令，区别仅在于执行者。
 
-- **kit**（默认）：用 Maven 上的预编译 ffmpeg-kit（FFmpeg 8.1.1 Full）。不用 NDK，任何机器都能编。
-- **native**：用 `app/src/main/cpp` 里的自研 JNI。得先在 Linux / macOS / WSL 上跑 `scripts/build-ffmpeg-android.sh` 把 FFmpeg 编出来。
+- **kit**（默认）：使用 Maven 上预编译的 ffmpeg-kit（FFmpeg 8.1.1 Full），无需 NDK，可在任意平台构建。
+- **native**：使用 `app/src/main/cpp` 下的自研 JNI 层，需先在 Linux / macOS / WSL 环境运行 `scripts/build-ffmpeg-android.sh` 编译 FFmpeg。
 
-切换就改 `gradle.properties` 里的 `ffmpegx.backend`，或者命令行加 `-Pffmpegx.backend=native`。
+切换方式：修改 `gradle.properties` 中的 `ffmpegx.backend`，或通过命令行参数 `-Pffmpegx.backend=native` 指定。
 
-官方 ffmpeg-kit 2025 年初从 Maven Central 下架了，现在用的是社区维护的分支 `com.antonkarpenko:ffmpeg-kit-full`。
+官方 ffmpeg-kit 已于 2025 年初从 Maven Central 下架，本项目使用社区维护的分支 `com.antonkarpenko:ffmpeg-kit-full`。
 
-## 能干啥
+## 功能
 
-格式转换、视频压缩（8 个预设 + 体积预估）、剪辑截取、音频处理（提取 / 变速 / 响度标准化）、GIF、拼接、字幕（烧录 / 提取 / 封装）、水印画中画、查看媒体信息、直接敲命令、任务队列。首页会列出这台设备实际支持的硬编硬解。
+| 模块 | 说明 |
+|---|---|
+| 格式转换 | 容器、编码器、CRF / ABR、缩放、帧率、音频编码 |
+| 视频压缩 | 8 种预设与体积预估 |
+| 剪辑截取 | 无损剪切与精确重编码 |
+| 音频处理 | 提取、变速、响度标准化 |
+| GIF 制作 | 双遍调色板编码 |
+| 视频拼接 | 无损拼接与通用重编码 |
+| 字幕处理 | 烧录、提取、封装 |
+| 水印 / 画中画 | 图片水印、画中画、分屏 |
+| 媒体信息 | ffprobe 全字段解析 |
+| 命令行 | 直接输入 ffmpeg 参数 |
+| 任务队列 | 串行执行、进度、取消、前台服务 |
 
-## 几个实话
+首页展示当前设备实际支持的硬件编解码能力。
 
-- 一次只跑一个任务。FFmpeg 命令行一堆全局状态，串行是正确性要求，不是偷懒。
-- 选文件有时会复制一份。SAF 给的管道不能 seek，FFmpeg 又需要，所以解不出真实路径时会复制到缓存。
-- 输出不能直接写 SAF，得走「导出到媒体库」。
-- release 包没签名，上架自己配。
-- 转码还没在真机 / 模拟器上实跑过，目前只有单元测试兜底。
+## 已知限制
+
+- 任务串行执行。FFmpeg 命令行存在大量进程级全局状态，串行是正确性要求。
+- 部分文件在选择时会复制至应用缓存。SAF 提供的管道不支持 seek，而 FFmpeg 需要可寻址输入。
+- 输出不支持直接写入 SAF，需通过「导出到媒体库」完成。
+- release 包未配置签名，发布前需自行配置。
+- 转码流程尚未在真机或模拟器上完成实机验证，目前仅由单元测试覆盖。
 
 ## 测试
 
-85 个单元测试，盯着硬件规划、命令生成、进度解析、预设这几块最容易错的地方：
+项目包含 85 个单元测试，覆盖硬件加速规划、命令生成、进度解析与预设换算等易错逻辑：
 
 ```bash
 ./gradlew :app:testDebugUnitTest
 ```
 
-写测试的过程里揪出两个真 bug：丢视频流时还会生成 `-vf`（跟 `-vn` 打架），以及「质量优先」策略在规划器里根本没被判断。
+测试过程中发现并修复了两处缺陷：其一，丢弃视频流时仍生成 `-vf`，与 `-vn` 冲突；其二，「质量优先」策略未在规划器中生效。
 
-## 目录
+## 目录结构
 
 ```
 app/src/main/java/com/zhiwei/ffmpegx/
-  core/hw/       硬件加速规划（MediaCodec 枚举 + 方案计算）
+  core/hw/       硬件加速规划（MediaCodec 枚举与方案计算）
   core/cmd/      命令构造
-  core/engine/   执行会话 + 进度解析
-  core/media/    Uri → 真实路径
-  core/task/     Room 队列 + 前台服务
+  core/engine/   执行会话与进度解析
+  core/media/    Uri 到真实路径的解析
+  core/task/     Room 任务队列与前台服务
   ui/            Compose 界面
 app/src/kit/java/      ffmpeg-kit 后端
 app/src/native/java/   自研 JNI 后端
 scripts/               构建脚本
 ```
 
-## 许可
+## 许可证
 
-GPL-3.0。默认后端用的 ffmpeg-kit-full 里带了 libx264 / libx265 这些 GPL 组件，整个 App 就得跟着 GPL。要是只用 LGPL 组件自己编，可以换。
+本项目采用 GPL-3.0 许可证。默认后端使用的 ffmpeg-kit-full 包含 libx264 / libx265 等 GPL 组件，依据 FFmpeg 的许可要求，分发链接这些组件的应用须整体以 GPL 兼容许可证发布。若仅使用 LGPL 组件自行编译，可另行选择许可证。
