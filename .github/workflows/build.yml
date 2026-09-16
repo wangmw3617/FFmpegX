@@ -32,13 +32,26 @@ jobs:
           java-version: '21'
           cache: gradle
 
+      # 不再依赖 android-actions/setup-android（其 v3 在 Node24 runner 上会失败）。
+      # ubuntu-latest 自带 Android SDK；有 cmdline-tools 就直接用，没有才下载。
       - name: Set up Android SDK
-        uses: android-actions/setup-android@v3
-
-      - name: Install SDK packages
         run: |
-          yes | sdkmanager --licenses >/dev/null 2>&1 || true
-          sdkmanager "$SDK_PLATFORM" "$SDK_BUILD_TOOLS"
+          set -e
+          SDK="${ANDROID_SDK_ROOT:-/usr/local/lib/android/sdk}"
+          SDKMGR="$(ls "$SDK"/cmdline-tools/*/bin/sdkmanager 2>/dev/null | head -n1 || true)"
+          if [ -z "$SDKMGR" ]; then
+            echo "cmdline-tools 不存在，下载安装…"
+            mkdir -p "$SDK/cmdline-tools"
+            curl -sSL -o /tmp/cmdtools.zip https://dl.google.com/android/repository/commandlinetools-linux-11076708_latest.zip
+            unzip -q /tmp/cmdtools.zip -d /tmp/cmdtools
+            mv /tmp/cmdtools/cmdline-tools "$SDK/cmdline-tools/latest"
+            SDKMGR="$SDK/cmdline-tools/latest/bin/sdkmanager"
+          fi
+          echo "ANDROID_SDK_ROOT=$SDK" >> "$GITHUB_ENV"
+          echo "ANDROID_HOME=$SDK" >> "$GITHUB_ENV"
+          echo "using sdkmanager: $SDKMGR"
+          yes | "$SDKMGR" --licenses >/dev/null 2>&1 || true
+          "$SDKMGR" "$SDK_PLATFORM" "$SDK_BUILD_TOOLS"
 
       - name: Make gradlew executable
         run: chmod +x gradlew
@@ -71,12 +84,23 @@ jobs:
           cache: gradle
 
       - name: Set up Android SDK
-        uses: android-actions/setup-android@v3
-
-      - name: Install SDK packages
         run: |
-          yes | sdkmanager --licenses >/dev/null 2>&1 || true
-          sdkmanager "$SDK_PLATFORM" "$SDK_BUILD_TOOLS"
+          set -e
+          SDK="${ANDROID_SDK_ROOT:-/usr/local/lib/android/sdk}"
+          SDKMGR="$(ls "$SDK"/cmdline-tools/*/bin/sdkmanager 2>/dev/null | head -n1 || true)"
+          if [ -z "$SDKMGR" ]; then
+            echo "cmdline-tools 不存在，下载安装…"
+            mkdir -p "$SDK/cmdline-tools"
+            curl -sSL -o /tmp/cmdtools.zip https://dl.google.com/android/repository/commandlinetools-linux-11076708_latest.zip
+            unzip -q /tmp/cmdtools.zip -d /tmp/cmdtools
+            mv /tmp/cmdtools/cmdline-tools "$SDK/cmdline-tools/latest"
+            SDKMGR="$SDK/cmdline-tools/latest/bin/sdkmanager"
+          fi
+          echo "ANDROID_SDK_ROOT=$SDK" >> "$GITHUB_ENV"
+          echo "ANDROID_HOME=$SDK" >> "$GITHUB_ENV"
+          echo "using sdkmanager: $SDKMGR"
+          yes | "$SDKMGR" --licenses >/dev/null 2>&1 || true
+          "$SDKMGR" "$SDK_PLATFORM" "$SDK_BUILD_TOOLS"
 
       - name: Make gradlew executable
         run: chmod +x gradlew
