@@ -1,5 +1,11 @@
 # FFmpegX
 
+![Build](https://github.com/wangmw3617/FFmpegX/actions/workflows/build.yml/badge.svg)
+![License: GPL-3.0](https://img.shields.io/badge/License-GPLv3-blue.svg)
+![minSdk 24](https://img.shields.io/badge/minSdk-24-green.svg)
+![targetSdk 36](https://img.shields.io/badge/targetSdk-36-green.svg)
+![Kotlin 2.1](https://img.shields.io/badge/Kotlin-2.1-7F52FF.svg)
+
 Android 原生 FFmpeg 前面板。把 FFmpeg 的完整命令行能力包装成可用的移动端工具，并在运行时根据设备
 SoC 实际开放的 MediaCodec 能力，自动选择硬解 / 硬编通路。
 
@@ -283,3 +289,27 @@ FFmpegX/
 所有处理都在本机完成。App 不声明 `INTERNET` 权限。`native` 后端的 FFmpeg 以
 `--disable-network` 编译；`kit` 后端受其构建配置限制，但 App 本身没有网络权限，
 无法发起任何请求。
+
+---
+
+## 10. 工程与自动化
+
+| 文件 | 作用 |
+|---|---|
+| `.github/workflows/build.yml` | CI：单元测试 → 构建 debug APK → 打 `v*` tag 自动发 Release |
+| `.github/dependabot.yml` | 每周检查 Gradle / Actions 依赖更新 |
+| `.gitattributes` | 统一换行符（文本 LF、Windows 脚本 CRLF、二进制不转换） |
+| `.editorconfig` | 跨编辑器统一缩进 / 编码 / 行尾 |
+| `scripts/check-imports.py` | 编译前静态自检，跨包导入错误一次性揪出来 |
+
+---
+
+## 11. 许可
+
+本项目以 **GPL-3.0** 发布（见 [`LICENSE`](LICENSE)）。
+
+选 GPL-3.0 的原因：默认 `kit` 后端使用的 `ffmpeg-kit-full` 打包了 libx264 / libx265 等 **GPL**
+组件，按 FFmpeg 的许可要求，分发链接了这些库的应用必须整体以 GPL 兼容许可发布。
+
+> 若改用 `native` 后端且只编入 LGPL 组件（去掉 `--enable-gpl`、不引入 x264/x265），
+> 理论上可改为 LGPL 许可——这是你的取舍，替换 `LICENSE` 即可。
