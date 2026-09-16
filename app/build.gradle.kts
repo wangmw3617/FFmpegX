@@ -37,6 +37,39 @@ val ffmpegAbis = prop("ffmpegx.abis", "arm64-v8a,armeabi-v7a,x86_64")
     .split(",").map { it.trim() }.filter { it.isNotEmpty() }
 
 // =============================================================================
+//  版本号
+//
+//  优先级：-Pffmpegx.versionName / gradle.properties < local.properties
+//          < 环境变量 FFMPEGX_VERSION_NAME < 下面的兜底值
+//
+//  CI 发布时 workflow 从 tag 名取出（v1.0.3 -> 1.0.3）并通过环境变量传进来，
+//  这样打 tag 就是唯一的「发版动作」，不需要再改代码。
+//  versionCode 由 versionName 推导，保证单调递增（Android 要求新包 versionCode 更大）。
+// =============================================================================
+
+val fallbackVersionName = "1.0.0"
+val versionNameValue = prop("ffmpegx.versionName", System.getenv("FFMPEGX_VERSION_NAME") ?: fallbackVersionName)
+    .trim().removePrefix("v").ifBlank { fallbackVersionName }
+
+// 1.0.3 -> 10003，1.2 -> 10002，1 -> 10000；负值或非法输入退回 1
+val versionCodeValue: Int = run {
+    val parts = versionNameValue.split('.', '-', '+')
+        .map { it.takeWhile(Char::isDigit) }
+        .filter { it.isNotEmpty() }
+        .map { it.toIntOrNull() ?: 0 }
+    val major = parts.getOrElse(0) { 0 }
+    val minor = parts.getOrElse(1) { 0 }
+    val patch = parts.getOrElse(2) { 0 }
+    val code = major * 10_000 + minor * 100 + patch
+    if (code > 0) code else 1
+}
+
+if (versionNameValue == fallbackVersionName && System.getenv("FFMPEGX_VERSION_NAME").isNullOrBlank()) {
+    logger.lifecycle("未指定版本号，使用默认值 ${fallbackVersionName}（CI 发布时会由 tag 注入）")
+}
+logger.lifecycle("versionName = ${versionNameValue}  versionCode = ${versionCodeValue}")
+
+// =============================================================================
 //  发布签名
 //
 //  读取顺序：根目录 keystore.properties（本地构建，已 gitignore）→ 环境变量（CI 注入）。
@@ -77,8 +110,8 @@ android {
         applicationId = "com.zhiwei.ffmpegx"
         minSdk = 24
         targetSdk = 36
-        versionCode = 1
-        versionName = "1.0.0"
+        versionCode = versionCodeValue
+        versionName = versionNameValue
 
         vectorDrawables.useSupportLibrary = true
 

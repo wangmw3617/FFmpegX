@@ -31,12 +31,23 @@ jobs:
     name: Build ffmpeg-kit-next AAR
     runs-on: ubuntu-latest
     steps:
+      # 缓存 key 里不能出现逗号：actions/cache 会直接报
+      # "Key Validation Error: ... cannot contain commas" 并让整个 job 失败。
+      # 所以这里先把 ABI 列表转成无逗号的形式。
+      - name: Normalize ABI list
+        id: abis
+        shell: bash
+        run: |
+          SLUG="$(echo "${FFMPEGX_ABIS}" | tr -d ' ' | tr ',' '_')"
+          echo "slug=${SLUG}" >> "$GITHUB_OUTPUT"
+          echo "缓存键里的 ABI 片段 = ${SLUG}"
+
       - name: Cache AAR
         id: aar-cache
         uses: actions/cache@v4
         with:
           path: ${{ github.workspace }}/prebuilt
-          key: ffmpegkitnext-${{ env.FFMPEG_KIT_NEXT_VERSION }}-${{ env.FFMPEGX_ABIS }}-${{ runner.os }}
+          key: ffmpegkitnext-${{ env.FFMPEG_KIT_NEXT_VERSION }}-${{ steps.abis.outputs.slug }}-${{ runner.os }}
           restore-keys: ffmpegkitnext-${{ env.FFMPEG_KIT_NEXT_VERSION }}-
 
       - name: Install Nix
@@ -61,25 +72,56 @@ jobs:
           git clone --depth 1 https://github.com/arthenica/ffmpeg-kit-next.git \
             "${GITHUB_WORKSPACE}/src"
 
+      # 由 FFMPEGX_ABIS 推导 --disable-arch-*：
+      # 上游支持的 Android 架构名是 arm-v7a / arm-v7a-neon / arm64-v8a / x86 / x86_64，
+      # 而 FFMPEGX_ABIS 用的是 Android 侧的名字（armeabi-v7a）。写死反而容易与
+      # gradle.properties 的 ffmpegx.abis 脱节，所以在这里算出来。
       - name: Build AAR
         if: steps.aar-cache.outputs.cache-hit != 'true'
         working-directory: ${{ github.workspace }}/src
+        shell: bash
         run: |
+          # Android ABI -> 上游架构名
+          UPSTREAM_ARCHS=""
+          IFS=',' read -ra WANTED <<< "${FFMPEGX_ABIS}"
+          for abi in "${WANTED[@]}"; do
+            abi="$(echo "$abi" | xargs)"
+            case "$abi" in
+              arm64-v8a)    UPSTREAM_ARCHS="${UPSTREAM_ARCHS} arm64-v8a" ;;
+              armeabi-v7a)  UPSTREAM_ARCHS="${UPSTREAM_ARCHS} arm-v7a" ;;
+              x86)          UPSTREAM_ARCHS="${UPSTREAM_ARCHS} x86" ;;
+              x86_64)       UPSTREAM_ARCHS="${UPSTREAM_ARCHS} x86_64" ;;
+              *)            echo "::error::不支持的 ABI：$abi"; exit 1 ;;
+            esac
+          done
+          echo "上游架构名：${UPSTREAM_ARCHS}"
+
+          DISABLE=()
+          for arch in arm-v7a arm-v7a-neon arm64-v8a x86 x86_64; do
+            KEEP=no
+            for want in ${UPSTREAM_ARCHS}; do
+              [ "$arch" = "$want" ] && KEEP=yes && break
+            done
+            [ "$KEEP" = no ] && DISABLE+=("--disable-arch-${arch}")
+          done
+          echo "跳过的架构：${DISABLE[*]:-无}"
+
           # --enable-gpl 是必须的：不开就没有 libx264/libx265，
           # FFmpegX 的「兼容优先」（全软编码）策略会失效。
           ./nix-android.sh \
-            -p "${{ env.FFMPEG_KIT_NEXT_NIX_PROFILE }}" \
+            -p "${FFMPEG_KIT_NEXT_NIX_PROFILE}" \
             --api-level=24 \
-            --disable-arch-arm-v7a-neon \
-            --disable-arch-x86 \
+            "${DISABLE[@]}" \
             --enable-gpl \
             --enable-lib-x264 \
             --enable-lib-x265
+
           # 归拢到一个稳定路径，方便缓存与下游 job 引用
           mkdir -p "${GITHUB_WORKSPACE}/prebuilt"
           cp -r prebuilt/bundle-android-aar-24-maven/. "${GITHUB_WORKSPACE}/prebuilt/"
 
       - name: Verify AAR
+        shell: bash
         run: |
           AAR="$(find "${GITHUB_WORKSPACE}/prebuilt" -name '*.aar' | head -1)"
           if [ -z "${AAR}" ]; then
@@ -87,14 +129,26 @@ jobs:
             exit 1
           fi
           ls -lh "${AAR}"
-          # 确认 GPL 库真的编进去了（缺了会让全软编码静默失效）
-          unzip -l "${AAR}" | grep -E 'libavcodec|libx264|libx265' || true
+
+          echo "--- AAR 内包含的 ABI ---"
+          # AAR 的 jni 目录按 jni/<abi>/ 存放，把它列出来核对
+          unzip -l "${AAR}" | awk '$4 ~ /^jni\// { split($4, p, "/"); print p[2] }' | sort -u | tee /tmp/aar-abis.txt
+
+          # 这个检查是「软」的：libx264/libx265 有可能是静态链进 libavcodec.so 的，
+          # 此时按文件名 grep 不到。真失败的信号在构建期的 "Invalid configuration
+          # detected: GPL library x264 enabled without --enable-gpl flag"。
+          # 这里只做提示，不 fail —— 误报会挡住一次 40 分钟的构建。
+          echo "--- 尝试确认 GPL 库 ---"
+          unzip -l "${AAR}" | grep -Ei 'x264|x265' \
+            || echo "::notice::未按文件名找到 libx264/libx265，可能已静态链接进 libavcodec.so；建议装机后用「媒体信息」页确认 H.264 软编可用"
 
       - name: Upload AAR repository
         uses: actions/upload-artifact@v4
         with:
           name: ffmpeg-kit-next-maven
           path: ${{ github.workspace }}/prebuilt
+          # AAR 只在本次 run 的两个下游 job 用，3 天足够，也不占长期配额
+          retention-days: 3
           if-no-files-found: error
 
   # ===========================================================================
@@ -155,6 +209,15 @@ jobs:
           FFMPEGX_FFMPEG_KIT_NEXT_REPO: ${{ github.workspace }}/kit-next-repo
         run: ./gradlew testDebugUnitTest --no-daemon --stacktrace
 
+      - name: Upload test report
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: unit-test-report
+          path: app/build/reports/tests/
+          retention-days: 7
+          if-no-files-found: ignore
+
   # ===========================================================================
   #  构建 APK
   # ===========================================================================
@@ -205,33 +268,75 @@ jobs:
           key: gradle-build-${{ runner.os }}-${{ hashFiles('**/*.gradle.kts', 'gradle/libs.versions.toml') }}
           restore-keys: gradle-build-${{ runner.os }}-
 
+      # tag 形如 v1.0.3 -> 1.0.3，传给 Gradle 作为 versionName。
+      # 非 tag 触发（main / PR）时留空，Gradle 用自己的默认值。
+      - name: Resolve version
+        id: version
+        shell: bash
+        run: |
+          if [[ "${GITHUB_REF}" == refs/tags/v* ]]; then
+            VERSION="${GITHUB_REF_NAME#v}"
+          else
+            VERSION=""
+          fi
+          echo "name=${VERSION}" >> "$GITHUB_OUTPUT"
+          echo "versionName = ${VERSION:-（未指定，用 Gradle 默认值）}"
+
       - name: Restore release keystore
         if: startsWith(github.ref, 'refs/tags/v')
         env:
           KEYSTORE_BASE64: ${{ secrets.RELEASE_KEYSTORE_BASE64 }}
         run: |
           if [ -z "${KEYSTORE_BASE64}" ]; then
-            echo "::warning::未配置 RELEASE_KEYSTORE_BASE64，release 包将不签名"
-            exit 0
+            echo "::error::未配置 RELEASE_KEYSTORE_BASE64，无法产出签名包"
+            exit 1
           fi
           echo "${KEYSTORE_BASE64}" | base64 -d > "${GITHUB_WORKSPACE}/release.jks"
+          if [ ! -s "${GITHUB_WORKSPACE}/release.jks" ]; then
+            echo "::error::release.jks 解码后为空，RELEASE_KEYSTORE_BASE64 可能不是合法的 base64"
+            exit 1
+          fi
           echo "RELEASE_STORE_FILE=${GITHUB_WORKSPACE}/release.jks" >> "$GITHUB_ENV"
+          echo "已恢复签名密钥（$(stat -c%s "${GITHUB_WORKSPACE}/release.jks") 字节）"
 
       - name: Build debug APKs
         env:
           FFMPEGX_FFMPEG_KIT_NEXT_REPO: ${{ github.workspace }}/kit-next-repo
-          RELEASE_STORE_PASSWORD: ${{ secrets.RELEASE_STORE_PASSWORD }}
-          RELEASE_KEY_ALIAS: ${{ secrets.RELEASE_KEY_ALIAS }}
-          RELEASE_KEY_PASSWORD: ${{ secrets.RELEASE_KEY_PASSWORD }}
+          FFMPEGX_VERSION_NAME: ${{ steps.version.outputs.name }}
         run: ./gradlew assembleDebug --no-daemon --stacktrace
 
       - name: Build release APKs
         env:
           FFMPEGX_FFMPEG_KIT_NEXT_REPO: ${{ github.workspace }}/kit-next-repo
+          FFMPEGX_VERSION_NAME: ${{ steps.version.outputs.name }}
           RELEASE_STORE_PASSWORD: ${{ secrets.RELEASE_STORE_PASSWORD }}
           RELEASE_KEY_ALIAS: ${{ secrets.RELEASE_KEY_ALIAS }}
           RELEASE_KEY_PASSWORD: ${{ secrets.RELEASE_KEY_PASSWORD }}
         run: ./gradlew assembleRelease --no-daemon --stacktrace
+
+      # Release 包必须真的签名了 —— 没签名的话 Gradle 会静默产出
+      # app-*-release-unsigned.apk，装不上，而且要到用户手里才被发现。
+      - name: Verify APK signatures
+        if: startsWith(github.ref, 'refs/tags/v')
+        shell: bash
+        run: |
+          set -e
+          SIGNED="$(find app/build/outputs/apk/release -name '*-release.apk' 2>/dev/null | wc -l)"
+          UNSIGNED="$(find app/build/outputs/apk/release -name '*unsigned*.apk' 2>/dev/null | wc -l)"
+          echo "已签名 APK: ${SIGNED} 个；未签名 APK: ${UNSIGNED} 个"
+          find app/build/outputs/apk/release -name '*.apk' -exec ls -lh {} \;
+          if [ "${SIGNED}" -eq 0 ]; then
+            echo "::error::没有产出已签名的 release APK（签名配置未生效）"
+            exit 1
+          fi
+          if [ "${UNSIGNED}" -gt 0 ]; then
+            echo "::error::存在未签名 APK，签名密钥未正确应用"
+            exit 1
+          fi
+          # 用 apksigner 复核第一份产物，确认 v2/v3 签名真的在
+          APKSIGNER="$(find "${ANDROID_SDK_ROOT}/build-tools" -name apksigner | sort -V | tail -1)"
+          FIRST="$(find app/build/outputs/apk/release -name '*-release.apk' | head -1)"
+          "${APKSIGNER}" verify --print-certs "${FIRST}"
 
       - name: Collect APKs
         run: |
@@ -244,6 +349,7 @@ jobs:
         with:
           name: ffmpegx-apks
           path: artifacts/*.apk
+          retention-days: 7
           if-no-files-found: error
 
   # ===========================================================================
@@ -261,19 +367,23 @@ jobs:
           name: ffmpegx-apks
           path: apks
 
+      # 命名沿用 v1.0.0 / v1.0.1 的既有格式，便于对照升级：
+      #   ffmpegx-v1.0.3-arm64-v8a-release.apk
       - name: Rename with version
+        shell: bash
         run: |
+          set -e
           VERSION="${GITHUB_REF_NAME#v}"
           cd apks
           for f in *.apk; do
-            # app-arm64-v8a-release.apk -> FFmpegX-1.0.0-arm64-v8a.apk
+            # app-arm64-v8a-release.apk -> ffmpegx-v1.0.3-arm64-v8a-release.apk
             ABIVAR="$(echo "$f" | sed -E 's/^app-(.+)-(debug|release)\.apk$/\1/')"
             BUILDVAR="$(echo "$f" | sed -E 's/^app-.+-(debug|release)\.apk$/\1/')"
-            if [ "$BUILDVAR" = "debug" ]; then
-              mv "$f" "FFmpegX-${VERSION}-${ABIVAR}-debug.apk"
-            else
-              mv "$f" "FFmpegX-${VERSION}-${ABIVAR}.apk"
+            if [ "$ABIVAR" = "$f" ] || [ "$BUILDVAR" = "$f" ]; then
+              echo "::error::无法从文件名解析 ABI 与构建类型：$f"
+              exit 1
             fi
+            mv "$f" "ffmpegx-v${VERSION}-${ABIVAR}-${BUILDVAR}.apk"
           done
           ls -lh
 
