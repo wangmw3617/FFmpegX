@@ -18,7 +18,22 @@ serialization = "1.8.1"
 coroutines = "1.10.2"
 documentfile = "1.0.1"
 splashscreen = "1.0.1"
-ffmpegKit = "2.2.1"
+
+# ---------------------------------------------------------------------------
+# FFmpeg 核心：ffmpeg-kit-next（arthenica 官方续作）
+#
+# 版本号规则 == 上游 FFmpeg 的 major.minor（见 README §12）：
+#   9.0.0  =>  FFmpeg 9.0.1
+#   8.1.1  =>  FFmpeg 8.1.2
+#
+# FFmpegKitNext 不发布 Maven Central / CocoaPods / npm 制品，只发源码。
+# 必须自己构建出 AAR，再放到本地 Maven 仓库（见 settings.gradle.kts 里的
+# ffmpegKitNextRepo）。构建方式见 docs/ffmpeg-kit-next-build.md。
+#
+# 构建时必须加 --enable-gpl，否则不含 libx264/libx265，
+# 「兼容优先」（全软编码）策略会因为找不到软件编码器而失效。
+# ---------------------------------------------------------------------------
+ffmpegKitNext = "9.0.0"
 
 junit = "4.13.2"
 
@@ -67,9 +82,9 @@ kotlinx-coroutines-android = { module = "org.jetbrains.kotlinx:kotlinx-coroutine
 
 junit = { module = "junit:junit", version.ref = "junit" }
 
-# 预编译 FFmpeg（ffmpeg-kit 的社区维护分支，FFmpeg 8.1.1 Full，LGPL/GPL 双许可）
-# 官方 com.arthenica 已于 2025 年初下架，这是目前仍在维护的替代品
-ffmpeg-kit-full = { module = "com.antonkarpenko:ffmpeg-kit-full", version.ref = "ffmpegKit" }
+# FFmpegKitNext：官方续作，从本地 Maven 仓库解析（自己构建，见 docs/）
+# 会传递依赖 com.arthenica:smart-exception-java:0.2.1（走 mavenCentral）
+ffmpeg-kit-next = { module = "com.arthenica:ffmpeg-kit-next", version.ref = "ffmpegKitNext" }
 
 [plugins]
 android-application = { id = "com.android.application", version.ref = "agp" }
