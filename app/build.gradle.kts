@@ -75,11 +75,10 @@ android {
 
         vectorDrawables.useSupportLibrary = true
 
-        ndk {
-            abiFilters += ffmpegAbis
-        }
-
         if (useNativeBackend) {
+            // 告诉 CMake 编哪些 ABI；kit 后端不编原生代码，交给下面的 splits 控制
+            ndk { abiFilters += ffmpegAbis }
+
             externalNativeBuild {
                 cmake {
                     arguments += listOf(
@@ -97,6 +96,17 @@ android {
             "FFMPEG_BACKEND",
             "\"${if (useNativeBackend) "native" else "kit"}\"",
         )
+    }
+
+    // 按 ABI 拆包：每个 CPU 架构单独出一个 APK（如 app-arm64-v8a-debug.apk），
+    // 而不是打一个包含全部 ABI 的大包。isUniversalApk=false 表示不再额外产一个「全都有」的包。
+    splits {
+        abi {
+            isEnable = true
+            reset()
+            include(*ffmpegAbis.toTypedArray())
+            isUniversalApk = false
+        }
     }
 
     if (useNativeBackend) {
