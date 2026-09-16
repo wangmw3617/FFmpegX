@@ -8,6 +8,7 @@
 FFmpegX 是一个面向 Android 平台的 FFmpeg 图形前端。它将 FFmpeg 的命令行能力封装为移动端界面，并在运行时依据设备实际支持的 MediaCodec 编解码能力，自动选择硬件加速方案。
 
 - 技术栈：Kotlin + Jetpack Compose（Material 3）
+- FFmpeg 核心：ffmpeg-kit-next（arthenica 官方续作，FFmpeg 9.x）
 - 版本要求：最低 Android 7.0（API 24），目标 Android 16（API 36）
 
 ## 构建
@@ -19,6 +20,20 @@ FFmpegX 是一个面向 Android 平台的 FFmpeg 图形前端。它将 FFmpeg �
 该脚本会自动完成 Android SDK 与 Gradle 的下载安装，并将生成的 APK 输出至 `dist/` 目录。全部工具链位于项目的 `.toolchain/` 目录下，删除后可重新初始化。Windows 环境下可直接运行 `build-apk.cmd`。
 
 构建亦可交由 GitHub Actions 完成：推送代码或创建 `v*` 标签会触发自动测试与打包流程，创建标签时还会自动发布 Release（按 CPU 架构分别提供 APK）。本地构建需要 JDK 17 或更高版本，其余依赖均由脚本自动安装。
+
+### 先决条件：构建 FFmpeg 核心
+
+FFmpegX 使用 ffmpeg-kit-next 作为 FFmpeg 核心。它**不发布** Maven Central 制品，只发源码，因此首次构建前必须先自行编译出 AAR：
+
+```bash
+# 需要 Linux / macOS / WSL2；Nix 工作流需先安装 Nix
+git clone https://github.com/arthenica/ffmpeg-kit-next.git ../ffmpeg-kit-next
+./scripts/build-ffmpeg-kit-next.sh
+```
+
+脚本默认产出 minSdk 24、`arm64-v8a` + `armeabi-v7a` + `x86_64` 三个架构、并启用 GPL 库的 AAR。产物落在 ffmpeg-kit-next 的 `prebuilt/` 下，FFmpegX 会自动从默认相对路径解析。详细选项与排错见 [docs/ffmpeg-kit-next-build.md](docs/ffmpeg-kit-next-build.md)。
+
+> Windows 原生环境无法构建（上游只提供 Windows 目标的构建脚本），请使用 WSL2。
 
 ## 硬件加速
 
@@ -34,14 +49,16 @@ FFmpegX 是一个面向 Android 平台的 FFmpeg 图形前端。它将 FFmpeg �
 
 ## FFmpeg 集成方式
 
-上层代码不区分后端，因为两种方式执行的是同一条 ffmpeg 命令，区别仅在于执行者。
+FFmpeg 核心为 **ffmpeg-kit-next**，即原 ffmpeg-kit 作者 Taner Sener 的官方续作。执行的就是原样的 ffmpeg 命令行，因此上层的命令生成与硬件加速规划完全不需要感知底层实现。
 
-- **kit**（默认）：使用 Maven 上预编译的 ffmpeg-kit（FFmpeg 8.1.1 Full），无需 NDK，可在任意平台构建。
-- **native**：使用 `app/src/main/cpp` 下的自研 JNI 层，需先在 Linux / macOS / WSL 环境运行 `scripts/build-ffmpeg-android.sh` 编译 FFmpeg。
+选择它的原因：
 
-切换方式：修改 `gradle.properties` 中的 `ffmpegx.backend`，或通过命令行参数 `-Pffmpegx.backend=native` 指定。
+- 官方持续维护（原 `com.arthenica` 制品于 2025 年初下架，社区分支 `com.antonkarpenko` 已不再需要）；
+- 提供结构化的 `StatisticsCallback` 进度回调与 `FFprobeKit.getMediaInformation()`，无需从日志正则解析；
+- 内建 `ffkitsaf:` / `ffkitmem:` / `ffkitstream:` 协议，可直接读写 SAF Uri，省掉「复制到缓存」的中转；
+- 重写了执行入口，不存在裸 fftools 会因 `exit()` 终止宿主进程的问题。
 
-官方 ffmpeg-kit 已于 2025 年初从 Maven Central 下架，本项目使用社区维护的分支 `com.antonkarpenko:ffmpeg-kit-full`。
+代价是必须自行构建 AAR，见上文。历史上本项目还提供过「自研 JNI 编译 fftools」的第二后端，已随本次切换移除——既然都要自行构建，保留两条编译链只会让维护成本翻倍。迁移细节见 [docs/migration-to-kit-next.md](docs/migration-to-kit-next.md)。
 
 ## 功能
 
@@ -64,8 +81,8 @@ FFmpegX 是一个面向 Android 平台的 FFmpeg 图形前端。它将 FFmpeg �
 ## 已知限制
 
 - 任务串行执行。FFmpeg 命令行存在大量进程级全局状态，串行是正确性要求。
-- 部分文件在选择时会复制至应用缓存。SAF 提供的管道不支持 seek，而 FFmpeg 需要可寻址输入。
-- 输出不支持直接写入 SAF，需通过「导出到媒体库」完成。
+- 「媒体信息」页在直接读取 SAF 文档时会临时复制一份副本供 ffprobe 使用（ffprobe 需要可寻址输入），探测完成后立即删除。转码主流程不受影响，仍走零拷贝直读。
+- 输出到设备上任意位置需通过「导出到媒体库」完成。
 - release 包未配置签名，发布前需自行配置。
 - 转码流程尚未在真机或模拟器上完成实机验证，目前仅由单元测试覆盖。
 
@@ -86,12 +103,12 @@ app/src/main/java/com/zhiwei/ffmpegx/
   core/hw/       硬件加速规划（MediaCodec 枚举与方案计算）
   core/cmd/      命令构造
   core/engine/   执行会话与进度解析
-  core/media/    Uri 到真实路径的解析
+  core/media/    SAF Uri 解析（优先直读，回退缓存中转）
   core/task/     Room 任务队列与前台服务
+  native/        ffmpeg-kit-next 后端封装
   ui/            Compose 界面
-app/src/kit/java/      ffmpeg-kit 后端
-app/src/native/java/   自研 JNI 后端
 scripts/               构建脚本
+ docs/                  构建与迁移文档
 ```
 
 ## 发布签名
@@ -129,4 +146,8 @@ CI 构建：在仓库 Settings → Secrets and variables → Actions 添加以�
 
 ## 许可证
 
-本项目采用 GPL-3.0 许可证。默认后端使用的 ffmpeg-kit-full 包含 libx264 / libx265 等 GPL 组件，依据 FFmpeg 的许可要求，分发链接这些组件的应用须整体以 GPL 兼容许可证发布。若仅使用 LGPL 组件自行编译，可另行选择许可证。
+本项目采用 GPL-3.0 许可证。
+
+ffmpeg-kit-next 自身为 LGPL-3.0，但本项目的构建**必须**启用 GPL 库（`--enable-gpl --enable-lib-x264 --enable-lib-x265`），否则不含 libx264 / libx265，「兼容优先」（全软编码）策略会直接失效。启用后整个 bundle 受 GPL-3.0 约束，与本项目许可证一致。
+
+若仅使用 LGPL 组件自行编译，可另行选择许可证，但需同时放弃软件编码回退能力。
