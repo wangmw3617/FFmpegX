@@ -62,6 +62,18 @@ class DeviceViewModel @Inject constructor(
     private val _probe = MutableStateFlow(ProbeUiState())
     val probe: StateFlow<ProbeUiState> = _probe.asStateFlow()
 
+    /**
+     * 当前用于探测的输入。持有它是为了释放 ffkitsaf: url ——
+     * 这类 url 是 reusable 的，上游不会自动回收。
+     */
+    private var probeInput: FileResolver.Resolved? = null
+
+    override fun onCleared() {
+        super.onCleared()
+        probeInput?.let { FileResolver.cleanup(it) }
+        probeInput = null
+    }
+
     init {
         viewModelScope.launch {
             val ready = FFmpegNative.ensureLoaded()
@@ -92,39 +104,27 @@ class DeviceViewModel @Inject constructor(
     fun onPickProbeFile(uri: Uri) {
         viewModelScope.launch {
             _probe.update { it.copy(busy = true, error = null, exportedUri = null) }
+            // 上一个素材若占用着 SAF url，先释放
+            probeInput?.let { FileResolver.cleanup(it) }
+            probeInput = null
+
             val resolved = FileResolver.resolve(context, uri)
             resolved.fold(
                 onSuccess = { r ->
-                    // ffprobe 需要可 seek 的真实路径。若走的是 ffkitsaf 直读（没有落地文件），
-                    // 就先落一份临时副本供探测用，探测完即删 —— 转码本身仍然走零拷贝路径。
-                    val probeTarget = r.realPath
-                    if (probeTarget == null) {
-                        probeViaCache(uri, r.displayName)
-                        return@fold
-                    }
-                    runProbe(probeTarget, r.displayName)
+                    // 直接用 ffmpegInput 探测。
+                    //
+                    // 之前这里判断 r.realPath 为 null 就走 probeViaCache，把整个文件
+                    // 复制一份到缓存再探测 —— 只是看个分辨率/时长，却要等一个完整拷贝，
+                    // 大文件下几乎等同于卡死。而 ffkitsaf: 这类虚拟协议本来就能直接
+                    // 交给 ffprobe（上游文档：url that can be passed to FFprobeKit），
+                    // 完全不需要落地。
+                    probeInput = r
+                    runProbe(r.ffmpegInput, r.displayName)
                 },
                 onFailure = { t ->
                     _probe.update { it.copy(busy = false, error = "读取文件失败：${t.message}") }
                 },
             )
-        }
-    }
-
-    /** 没有真实路径时（ffkitsaf 直读），复制一份副本给 ffprobe 用，探测完即删 */
-    private suspend fun probeViaCache(uri: Uri, displayName: String) {
-        val dir = MediaFiles.workDir(context).let { File(it, "probe").apply { mkdirs() } }
-        val target = File(dir, "probe_${System.currentTimeMillis()}_$displayName")
-        try {
-            context.contentResolver.openInputStream(uri)?.use { input ->
-                target.outputStream().use { output -> input.copyTo(output, DEFAULT_BUFFER_SIZE) }
-            } ?: error("无法读取所选文件（可能没有授权）")
-            runProbe(target.absolutePath, displayName)
-        } catch (t: Throwable) {
-            _probe.update { it.copy(busy = false, error = "解析失败：${t.message}") }
-        } finally {
-            // 探测用完立即删除，不占空间
-            runCatching { target.delete() }
         }
     }
 
@@ -136,6 +136,9 @@ class DeviceViewModel @Inject constructor(
                 }
             },
             onFailure = { t ->
+                // 探测失败就没什么可导出的了，顺手把 url 还回去
+                probeInput?.let { FileResolver.cleanup(it) }
+                probeInput = null
                 _probe.update { it.copy(busy = false, error = "解析失败：${t.message}") }
             },
         )
@@ -146,8 +149,21 @@ class DeviceViewModel @Inject constructor(
         val info = _probe.value.info ?: return
         viewModelScope.launch {
             _probe.update { it.copy(busy = true) }
-            val file = File(info.path)
-            val uri = MediaFiles.publishToMediaStore(context, file, file.extension.ifBlank { "mp4" })
+            // 走 SAF 直读时 info.path 是 ffkitsaf:3.mp4 这类虚拟协议串，
+            // File() 解不出真实内容，导出必然失败 —— 这种情况下直接告诉用户原因，
+            // 而不是抛一个「文件不存在」让人摸不着头脑。
+            val source = File(info.path)
+            if (!source.exists()) {
+                _probe.update {
+                    it.copy(
+                        busy = false,
+                        error = "该素材是通过系统授权直接读取的，没有可导出的本地副本。" +
+                            "如需导出，请先把它保存到本机后再操作。",
+                    )
+                }
+                return@launch
+            }
+            val uri = MediaFiles.publishToMediaStore(context, source, source.extension.ifBlank { "mp4" })
             _probe.update {
                 it.copy(
                     busy = false,
@@ -158,5 +174,9 @@ class DeviceViewModel @Inject constructor(
         }
     }
 
-    fun clearProbe() = _probe.update { ProbeUiState() }
+    fun clearProbe() {
+        probeInput?.let { FileResolver.cleanup(it) }
+        probeInput = null
+        _probe.update { ProbeUiState() }
+    }
 }
