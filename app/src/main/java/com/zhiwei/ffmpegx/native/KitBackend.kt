@@ -2,6 +2,7 @@ package com.zhiwei.ffmpegx.native
 
 import android.content.Context
 import android.util.Log
+import com.arthenica.ffmpegkit.AbiDetect
 import com.arthenica.ffmpegkit.FFmpegKit
 import com.arthenica.ffmpegkit.FFmpegKitConfig
 import com.arthenica.ffmpegkit.FFmpegSession
@@ -68,9 +69,11 @@ internal class KitBackend(
             return try {
                 // 引用 FFmpegKitConfig 会触发 NativeLoader 加载 libffmpegkit.so 与各 libav*.so
                 versionString = FFmpegKitConfig.getFFmpegVersion() ?: "unknown"
+                // 注意：getNativeAbi() / getNativeMinSdk() 挂在 AbiDetect 上，
+                // 不在 FFmpegKitConfig 里（FFmpegKitConfig 只有 getVersion/getFFmpegVersion）。
                 buildDetail = runCatching {
                     "ffmpeg-kit-next ${FFmpegKitConfig.getVersion()} " +
-                        "(abi=${FFmpegKitConfig.getNativeAbi()}, minSdk=${FFmpegKitConfig.getNativeMinSdk()})"
+                        "(abi=${AbiDetect.getAbi()}, minSdk=${AbiDetect.getNativeMinSdk()})"
                 }.getOrDefault("")
                 loaded = true
                 Log.i(TAG, "FFmpegKitNext 加载成功，FFmpeg $versionString / $buildDetail")
@@ -117,7 +120,8 @@ internal class KitBackend(
 
         val session = FFmpegKit.executeWithArgumentsAsync(
             args.toTypedArray(),
-            { s -> finished.complete(s?.returnCode?.value ?: -1) },
+            // s.returnCode 是 protected，回调里也必须走 getReturnCode()
+            { s -> finished.complete(s?.getReturnCode()?.value ?: -1) },
             { log -> onLog(levelToInt(log?.level), log?.message.orEmpty()) },
             { stats ->
                 if (stats != null && onStats != null) {
@@ -155,16 +159,21 @@ internal class KitBackend(
             require(ensureLoaded()) { errorDetail.ifBlank { "FFmpegKitNext 未加载" } }
 
             val session = FFprobeKit.getMediaInformation(path)
-            val code = session.returnCode
+            // AbstractSession.returnCode / failStackTrace 是 protected var，
+            // 外部只能走公开 getter：getReturnCode() / getFailStackTrace()。
+            val code = session.getReturnCode()
             if (code != null && !ReturnCode.isSuccess(code)) {
-                error("ffprobe 退出码 ${code.value}：${session.failStackTrace ?: "无详细信息"}")
+                error("ffprobe 退出码 ${code.value}：${session.getFailStackTrace() ?: "无详细信息"}")
             }
-            val info = session.mediaInformation
+            // MediaInformationSession.mediaInformation 是 private var，
+            // 只能通过 open fun getMediaInformation() 取。
+            val info = session.getMediaInformation()
                 ?: error("ffprobe 没有返回媒体信息（文件可能已损坏或不是媒体文件）")
 
             // getAllProperties() 返回的就是 ffprobe -print_format json -show_format -show_streams
-            // 的完整 JSON，与「媒体信息」页期望的结构一致
-            info.allProperties.toString()
+            // 的完整 JSON，与「媒体信息」页期望的结构一致。
+            // 注意它声明为 open fun，Kotlin 不会为它合成 allProperties 属性语法。
+            info.getAllProperties().toString()
         }
     }
 
