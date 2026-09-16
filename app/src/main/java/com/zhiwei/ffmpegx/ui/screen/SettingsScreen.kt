@@ -22,6 +22,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.zhiwei.ffmpegx.BuildConfig
 import com.zhiwei.ffmpegx.core.hw.HwStrategy
 import com.zhiwei.ffmpegx.core.hw.VideoCodec
 import com.zhiwei.ffmpegx.core.settings.AppSettings
@@ -35,6 +36,7 @@ import com.zhiwei.ffmpegx.ui.components.SectionCard
 fun SettingsScreen(viewModel: SettingsViewModel = hiltViewModel()) {
     val settings by viewModel.settings.collectAsStateWithLifecycle()
     val device by viewModel.deviceInfo.collectAsStateWithLifecycle()
+    val backendInfo by viewModel.backendInfo.collectAsStateWithLifecycle()
     val nativeLabel by viewModel.nativeLabel.collectAsStateWithLifecycle()
 
     Column(
@@ -146,9 +148,9 @@ fun SettingsScreen(viewModel: SettingsViewModel = hiltViewModel()) {
         // -------------------------------------------------------------- 关于 ----
         SectionCard(title = "关于") {
             InfoRow("FFmpeg", nativeLabel)
-            InfoRow("执行核心", device?.backendName ?: "—")
-            InfoRow("SAF 直读直写", if (device?.supportsSaf == true) "支持" else "回退缓存中转")
-            InfoRow("应用版本", "1.0.0")
+            InfoRow("执行核心", backendInfo.backendName.ifBlank { "—" })
+            InfoRow("SAF 直读直写", if (backendInfo.supportsSaf) "支持" else "回退缓存中转")
+            InfoRow("应用版本", BuildConfig.VERSION_NAME)
             InfoRow("包名", "com.zhiwei.ffmpegx")
             Text(
                 "FFmpeg 核心为 ffmpeg-kit-next（arthenica 官方续作，FFmpeg 9.x），" +

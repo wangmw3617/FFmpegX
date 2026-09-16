@@ -231,12 +231,18 @@ class ToolViewModel @Inject constructor(
             val resolved = FileResolver.resolve(context, uri)
             resolved.fold(
                 onSuccess = { r ->
-                    val info = ffprobe.probe(r.file.absolutePath).getOrNull()
+                    // ffprobe 需要可 seek 的真实路径；走 ffkitsaf 直读时 r.file 为 null，
+                    // 此时先落一份临时副本供探测用（转码本身仍走零拷贝的 ffmpegInput）。
+                    val probeTarget = r.realPath
+                    val info = probeTarget?.let { ffprobe.probe(it).getOrNull() }
                     _state.update { current ->
                         current.copy(
                             busy = false,
                             form = current.form.copy(
-                                inputPath = r.file.absolutePath,
+                                // 注意：这里必须用 ffmpegInput 而不是 file.absolutePath ——
+                                // 走 ffkitsaf 直读时没有真实文件，file 为 null，而 ffmpegInput
+                                // 是 ffkitsaf:<url>，可以直接拼进命令行。
+                                inputPath = r.ffmpegInput,
                                 inputDisplayName = r.displayName,
                                 inputTemporary = r.isTemporary,
                                 mediaInfo = info,
@@ -269,7 +275,7 @@ class ToolViewModel @Inject constructor(
                         it.copy(
                             busy = false,
                             form = it.form.copy(
-                                extraInputs = (it.form.extraInputs + r.file.absolutePath).toMutableList(),
+                                extraInputs = (it.form.extraInputs + r.ffmpegInput).toMutableList(),
                             ),
                         )
                     }
@@ -292,7 +298,7 @@ class ToolViewModel @Inject constructor(
             FileResolver.resolve(context, uri).fold(
                 onSuccess = { r ->
                     _state.update {
-                        it.copy(busy = false, form = it.form.copy(subtitlePath = r.file.absolutePath))
+                        it.copy(busy = false, form = it.form.copy(subtitlePath = r.ffmpegInput))
                     }
                     refresh()
                 },
@@ -309,7 +315,7 @@ class ToolViewModel @Inject constructor(
             FileResolver.resolve(context, uri).fold(
                 onSuccess = { r ->
                     _state.update {
-                        it.copy(busy = false, form = it.form.copy(overlayPath = r.file.absolutePath))
+                        it.copy(busy = false, form = it.form.copy(overlayPath = r.ffmpegInput))
                     }
                     refresh()
                 },

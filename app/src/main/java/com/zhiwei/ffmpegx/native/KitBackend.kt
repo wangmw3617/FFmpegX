@@ -90,9 +90,9 @@ internal class KitBackend(
                         cause = cause.cause
                         depth++
                     }
-                    append("\n请确认 AAR 已构建且包含当前设备的 ABI（abiFilters={
-                        android.os.Build.SUPPORTED_ABIS.joinToString(",")
-                    }）")
+                    // 注意：这里是普通字符串字面量，不能跨行写。
+                    // 插值表达式 ${...} 内部可以换行，但字符串本身的换行必须用 \n。
+                    append("\n请确认 AAR 已构建且包含当前设备的 ABI（abiFilters=${android.os.Build.SUPPORTED_ABIS.joinToString(",")}）")
                 }
                 Log.e(TAG, "FFmpegKitNext 加载失败", t)
                 false
