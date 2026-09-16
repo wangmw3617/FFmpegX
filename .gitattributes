@@ -30,5 +30,12 @@
 *.py    text eol=lf
 gradlew text eol=lf
 
+# ---- 可执行位 ----
+# 在 Windows 上提交时空文件权限不会被记录，gradlew 会以 100644 入库，
+# 到 Linux runner 上执行 ./gradlew 直接 "Permission denied"（exit 126）。
+# 这里声明为 executable，让 Git 把权限位写进 index（100755），跨平台一致。
+gradlew            text eol=lf executable
+scripts/*.sh       text eol=lf executable
+
 # ---- 生成物（标记为不参与 diff/统计，减少噪音）----
 gradle/wrapper/gradle-wrapper.jar binary

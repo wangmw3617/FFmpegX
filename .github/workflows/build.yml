@@ -164,6 +164,13 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # gradlew 在 Git 里以 100644（普通文件）入库时会缺少可执行位，
+      # Linux runner 上直接 "Permission denied"（exit 126）。
+      # .gitattributes 已声明 executable，但历史提交里没有该位，
+      # 所以这里显式补一次，保证不依赖仓库状态。
+      - name: Make gradlew executable
+        run: chmod +x ./gradlew
+
       - name: Set up JDK 21
         uses: actions/setup-java@v4
         with:
@@ -227,6 +234,10 @@ jobs:
     needs: [ffmpeg-kit-next, test]
     steps:
       - uses: actions/checkout@v4
+
+      # 同 test job：历史提交里 gradlew 没有可执行位，显式补上
+      - name: Make gradlew executable
+        run: chmod +x ./gradlew
 
       - name: Set up JDK 21
         uses: actions/setup-java@v4
