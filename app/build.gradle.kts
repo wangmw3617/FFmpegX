@@ -30,6 +30,38 @@ val localProps = Properties().apply {
 fun prop(key: String, default: String): String =
     (project.findProperty(key) as String?) ?: localProps.getProperty(key) ?: default
 
+// =============================================================================
+//  发布签名
+//
+//  读取顺序：根目录 keystore.properties（本地构建，已 gitignore）→ 环境变量（CI 注入）。
+//  两者都没有时，release 包保持「未签名」，CI 会自动退回发布 debug 包，
+//  这样没有配密钥的人（包括 fork）也能正常构建。
+// =============================================================================
+
+val keystoreProps = Properties().apply {
+    val f = rootProject.file("keystore.properties")
+    if (f.exists()) f.inputStream().use { load(it) }
+}
+
+fun signProp(propKey: String, envKey: String): String? =
+    keystoreProps.getProperty(propKey) ?: System.getenv(envKey)
+
+val releaseStoreFile = signProp("storeFile", "RELEASE_STORE_FILE")
+val hasReleaseSigning: Boolean =
+    !releaseStoreFile.isNullOrBlank() &&
+        rootProject.file(releaseStoreFile).exists() &&
+        !signProp("storePassword", "RELEASE_STORE_PASSWORD").isNullOrBlank() &&
+        !signProp("keyAlias", "RELEASE_KEY_ALIAS").isNullOrBlank() &&
+        !signProp("keyPassword", "RELEASE_KEY_PASSWORD").isNullOrBlank()
+
+logger.lifecycle(
+    if (hasReleaseSigning) {
+        "Release 签名 = 已配置（${rootProject.file(releaseStoreFile!!).name}）"
+    } else {
+        "Release 签名 = 未配置（release 包将不签名）"
+    },
+)
+
 val requestedBackend = prop("ffmpegx.backend", "kit").lowercase()
 val ffmpegAbis = prop("ffmpegx.abis", "arm64-v8a,armeabi-v7a,x86_64")
     .split(",").map { it.trim() }.filter { it.isNotEmpty() }
@@ -118,6 +150,21 @@ android {
         }
     }
 
+    signingConfigs {
+        if (hasReleaseSigning) {
+            create("release") {
+                storeFile = rootProject.file(releaseStoreFile!!)
+                storePassword = signProp("storePassword", "RELEASE_STORE_PASSWORD")
+                keyAlias = signProp("keyAlias", "RELEASE_KEY_ALIAS")
+                keyPassword = signProp("keyPassword", "RELEASE_KEY_PASSWORD")
+                // APK Signature Scheme v1/v2/v3 全开：覆盖老设备，并支持密钥轮换
+                enableV1Signing = true
+                enableV2Signing = true
+                enableV3Signing = true
+            }
+        }
+    }
+
     buildTypes {
         debug {
             isMinifyEnabled = false
@@ -130,6 +177,9 @@ android {
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro",
             )
+            if (hasReleaseSigning) {
+                signingConfig = signingConfigs.getByName("release")
+            }
         }
     }
 
