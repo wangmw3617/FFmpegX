@@ -230,6 +230,10 @@ FFmpeg 的 `fftools` 是为「一次性命令行进程」写的：`exit_program(
 
 ```
 FFmpegX/
+├── .github/workflows/build.yml     CI：单元测试 → 构建 APK → 发版
+├── .github/dependabot.yml          依赖自动更新
+├── .gitattributes / .editorconfig  换行符与代码风格统一
+├── LICENSE                         GPL-3.0
 ├── build-apk.cmd                   Windows 双击入口
 ├── scripts/
 │   ├── build-apk.sh                一键构建 APK（含 SDK / Gradle 自动准备）
