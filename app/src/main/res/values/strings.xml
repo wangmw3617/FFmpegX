@@ -1,0 +1,113 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">FFmpegX</string>
+    <string name="app_slogan">移动端 FFmpeg 前面板</string>
+
+    <!-- 导航 -->
+    <string name="nav_home">首页</string>
+    <string name="nav_queue">队列</string>
+    <string name="nav_console">命令</string>
+    <string name="nav_settings">设置</string>
+
+    <!-- 首页 -->
+    <string name="home_device_card">设备与硬件加速</string>
+    <string name="home_tools">常用功能</string>
+    <string name="home_recent">最近任务</string>
+    <string name="home_soc">芯片平台</string>
+    <string name="home_hw_decode">硬解</string>
+    <string name="home_hw_encode">硬编</string>
+    <string name="home_av1">AV1</string>
+    <string name="home_vulkan">Vulkan 滤镜</string>
+
+    <!-- 工具 -->
+    <string name="tool_convert">格式转换</string>
+    <string name="tool_convert_desc">容器 / 编码器 / 封装</string>
+    <string name="tool_compress">视频压缩</string>
+    <string name="tool_compress_desc">目标体积 / CRF / 降分辨率</string>
+    <string name="tool_trim">剪辑截取</string>
+    <string name="tool_trim_desc">起止时间 / 无损剪切</string>
+    <string name="tool_audio">音频处理</string>
+    <string name="tool_audio_desc">提取 / 音量 / 变速 / 淡入淡出</string>
+    <string name="tool_gif">GIF 制作</string>
+    <string name="tool_gif_desc">两遍调色板高质量输出</string>
+    <string name="tool_concat">视频拼接</string>
+    <string name="tool_concat_desc">多文件合并 / 转场</string>
+    <string name="tool_subtitle">字幕处理</string>
+    <string name="tool_subtitle_desc">烧录 / 提取 / 封装</string>
+    <string name="tool_overlay">水印与画中画</string>
+    <string name="tool_overlay_desc">图片水印 / PiP / 分屏</string>
+    <string name="tool_probe">媒体信息</string>
+    <string name="tool_probe_desc">ffprobe 详细解析</string>
+    <string name="tool_console">命令行</string>
+    <string name="tool_console_desc">原始参数 / 实时日志</string>
+
+    <!-- 通用 -->
+    <string name="action_pick_file">选择文件</string>
+    <string name="action_pick_image">选择图片</string>
+    <string name="action_pick_subtitle">选择字幕</string>
+    <string name="action_add_files">添加文件</string>
+    <string name="action_start">开始</string>
+    <string name="action_cancel">取消</string>
+    <string name="action_delete">删除</string>
+    <string name="action_retry">重试</string>
+    <string name="action_clear">清空</string>
+    <string name="action_copy">复制</string>
+    <string name="action_save">保存</string>
+    <string name="action_reset">恢复默认</string>
+    <string name="action_preview">预览命令</string>
+    <string name="action_share">分享</string>
+    <string name="action_open">打开</string>
+    <string name="action_pause">暂停</string>
+    <string name="action_resume">继续</string>
+
+    <string name="label_input">输入</string>
+    <string name="label_output">输出</string>
+    <string name="label_no_file_selected">未选择文件</string>
+    <string name="label_advanced">高级选项</string>
+    <string name="label_command_preview">即将执行的命令</string>
+
+    <!-- 硬件加速策略 -->
+    <string name="hw_strategy">硬件加速策略</string>
+    <string name="hw_auto">智能（按设备能力自动选择）</string>
+    <string name="hw_speed">速度优先（硬编硬解）</string>
+    <string name="hw_quality">质量优先（软编 + 硬解）</string>
+    <string name="hw_compat">兼容优先（全软编软解）</string>
+    <string name="hw_off">关闭（纯软件）</string>
+
+    <!-- 状态 -->
+    <string name="status_pending">等待中</string>
+    <string name="status_running">执行中</string>
+    <string name="status_success">已完成</string>
+    <string name="status_failed">失败</string>
+    <string name="status_cancelled">已取消</string>
+
+    <!-- 错误 -->
+    <string name="err_native_missing">原生库未构建</string>
+    <string name="err_native_missing_desc">请先执行 scripts/build-ffmpeg-android.sh 生成 FFmpeg 预编译库，然后重新构建 App。当前仅「媒体信息」可用。</string>
+    <string name="err_no_input">请先选择输入文件</string>
+    <string name="err_no_output">请先指定输出文件</string>
+    <string name="err_empty_command">命令不能为空</string>
+
+    <!-- 设置 -->
+    <string name="settings_appearance">外观</string>
+    <string name="settings_theme">主题</string>
+    <string name="settings_dynamic_color">动态取色（Material You）</string>
+    <string name="settings_perf">性能</string>
+    <string name="settings_threads">编码线程数</string>
+    <string name="settings_threads_auto">自动（按 CPU 核心数）</string>
+    <string name="settings_log_level">日志级别</string>
+    <string name="settings_keep_screen_on">转码时保持亮屏</string>
+    <string name="settings_output">输出</string>
+    <string name="settings_output_dir">默认输出目录</string>
+    <string name="settings_overwrite">自动覆盖同名文件</string>
+    <string name="settings_notify">完成后通知</string>
+    <string name="settings_about">关于</string>
+
+    <!-- 通知 -->
+    <string name="notif_channel_name">转码任务</string>
+    <string name="notif_channel_desc">显示正在执行的转码任务进度</string>
+    <string name="notif_running_title">正在处理：%1$s</string>
+    <string name="notif_preparing">正在准备…</string>
+    <string name="notif_done_title">处理完成</string>
+    <string name="notif_failed_title">处理失败</string>
+</resources>
