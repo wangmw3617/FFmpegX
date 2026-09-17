@@ -88,7 +88,9 @@ object Commands {
         // ---- 流映射 ----
         if (output.video != null) cmd.map("0:v:0?") else cmd.flag("-vn")
         if (output.audio != null) cmd.map("0:a:0?") else cmd.flag("-an")
-        if (!output.copySubtitles) cmd.flag("-sn")
+        // 显式 -map 会关闭 FFmpeg 的自动流选择。想让字幕跟着走就必须显式 map 一次，
+        // 否则 -c:s 只是一句空话，字幕会被静默丢弃（且没有任何报错）。
+        if (output.copySubtitles) cmd.map("0:s?") else cmd.flag("-sn")
 
         // ---- 视频编码 ----
         output.video?.let { video -> applyVideoEncoding(cmd, plan, video, output.fps) }
