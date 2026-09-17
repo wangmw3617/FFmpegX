@@ -112,6 +112,17 @@ fun SettingsScreen(viewModel: SettingsViewModel = hiltViewModel()) {
                 label = { Text("默认输出目录（留空则保存到 Download/FFmpegX）") },
                 singleLine = true,
                 modifier = Modifier.fillMaxWidth(),
+                // 这里必须说清楚：Android 10 起是分区存储，应用不能按路径在公共目录
+                // 里建目录，填 /storage/emulated/0/... 这类路径会直接失效。
+                // 不写明白的话，用户填完看到的是「每个任务都失败」，
+                // 而报错跟输出目录毫无关系，根本想不到是这里的问题。
+                supportingText = {
+                    Text(
+                        "Android 10 起不允许应用按路径写公共目录，填公共路径会失效并自动退回默认目录。" +
+                            "产物最终都会导出到 Download/FFmpegX。",
+                        style = MaterialTheme.typography.bodySmall,
+                    )
+                },
             )
             SwitchRow(
                 title = "自动覆盖同名文件",

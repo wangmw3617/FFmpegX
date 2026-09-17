@@ -29,17 +29,47 @@ object MediaFiles {
     private const val TAG = "MediaFiles"
     const val APP_FOLDER = "FFmpegX"
 
-    /** 默认输出目录，不存在会自动创建 */
+    /**
+     * 默认输出目录，不存在会自动创建。
+     *
+     * ## 自定义目录为什么要做可写性检查
+     *
+     * 设置页那一栏是**自由文本框**，用户很容易填
+     * `/storage/emulated/0/Movies` 这类公共目录路径。但 Android 10 起是分区存储，
+     * 应用**不能按路径在公共目录里创建目录** —— `mkdirs()` 会直接返回 false。
+     *
+     * 早先的写法忽略了 `mkdirs()` 的返回值，把不存在的目录照原样返回出去。
+     * 后果是**每一个任务**都在写输出时失败，而报错是 ffmpeg 的
+     * 「Error opening output file ... Permission denied」，
+     * 跟「输出目录设置错了」毫无关联，极难定位。
+     *
+     * 所以这里改成：自定义目录**建不出来或不可写就退回默认目录**。
+     * 退回是安全的 —— 产物最终都会由 [publishToMediaStore] 导出到
+     * `Download/FFmpegX`，用户看到的结果与默认设置一致，不会丢文件。
+     */
     fun defaultOutputDir(context: Context, customDir: String?): File {
-        val base = if (!customDir.isNullOrBlank()) {
-            File(customDir)
-        } else {
-            context.getExternalFilesDir(Environment.DIRECTORY_MOVIES) ?: context.filesDir
-        }
-        val dir = if (base.name == APP_FOLDER) base else File(base, APP_FOLDER)
-        if (!dir.exists()) dir.mkdirs()
-        return dir
+        val fallback = appFolder(
+            context.getExternalFilesDir(Environment.DIRECTORY_MOVIES) ?: context.filesDir,
+        )
+        val custom = customDir?.takeIf { it.isNotBlank() }?.let { appFolder(File(it)) }
+        if (custom != null && isUsableDir(custom)) return custom
+        // 兜底目录理论上一定可用；这里仍然检查一次，避免返回一个不存在的路径
+        isUsableDir(fallback)
+        return fallback
     }
+
+    /** 用户填的目录若已带 FFmpegX 这一层就不再重复追加 */
+    private fun appFolder(base: File): File =
+        if (base.name == APP_FOLDER) base else File(base, APP_FOLDER)
+
+    /**
+     * 目录存在（能建出来）且可写。
+     *
+     * `canWrite()` 是 stat 级检查，不做真实 I/O —— 这个方法会在每次刷新输出路径时
+     * 被调用，不能在这里做文件读写（会拖慢主线程）。
+     */
+    private fun isUsableDir(dir: File): Boolean =
+        (dir.isDirectory || dir.mkdirs()) && dir.canWrite()
 
     /** 临时文件目录（GIF 调色板、concat 列表、两遍编码日志都放这里） */
     fun workDir(context: Context): File {

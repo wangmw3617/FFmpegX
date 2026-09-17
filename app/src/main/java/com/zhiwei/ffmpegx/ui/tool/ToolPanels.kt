@@ -246,7 +246,14 @@ fun OutputNamingSection(form: ToolForm, onUpdate: FormUpdate) {
             modifier = Modifier.fillMaxWidth(),
         )
         Text(
-            "留空时会自动保存到 Download/FFmpegX，无需任何权限。",
+            // 这里必须写准。实际流程是：ffmpeg 先写这个路径，成功后
+            // TaskRepository 会把产物导出到 Download/FFmpegX 并**删掉**这一份。
+            // 所以这个输入框只是「导出前的临时位置」，不是用户以为的最终保存位置 ——
+            // 之前那句「留空时会自动保存到 Download/FFmpegX」会让人以为
+            // 填了路径就保存在那里。
+            "留空会自动生成文件名。产物完成后统一导出到 Download/FFmpegX，无需任何权限；" +
+                "这里填的路径只是导出前的临时位置（导出失败时会保留下来作为兜底）。" +
+                "注意 Android 10 起不能按路径写公共目录，填 /storage/emulated/0/… 这类路径会失败。",
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
