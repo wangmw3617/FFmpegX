@@ -18,6 +18,11 @@ env:
   FFMPEG_KIT_NEXT_NIX_PROFILE: 'android-r27d'
   # FFmpegX 打包的 ABI（与 gradle.properties 的 ffmpegx.abis 一致）
   FFMPEGX_ABIS: 'arm64-v8a,armeabi-v7a,x86_64'
+  # AAR 启用的外部库指纹。**必须**参与缓存 key 计算：
+  # 只改构建参数而不改 key，会命中上一次的旧 AAR，新参数永远不生效。
+  # （v1.0.5 的「Encoder not found」就是这么来的：漏了 android-media-codec，
+  #   而缓存 key 只含版本号与 ABI，参数变化根本不会触发重建。）
+  FFMPEG_KIT_NEXT_LIBS_SLUG: 'gpl-x264-x265-mc-lame-opus-vorbis-vpx-ass'
 
 jobs:
   # ===========================================================================
@@ -47,8 +52,9 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ${{ github.workspace }}/prebuilt
-          key: ffmpegkitnext-${{ env.FFMPEG_KIT_NEXT_VERSION }}-${{ steps.abis.outputs.slug }}-${{ runner.os }}
-          restore-keys: ffmpegkitnext-${{ env.FFMPEG_KIT_NEXT_VERSION }}-
+          # restore-keys 的前缀也必须带上库指纹，否则仍会回退命中参数不同的旧 AAR
+          key: ffmpegkitnext-${{ env.FFMPEG_KIT_NEXT_VERSION }}-${{ steps.abis.outputs.slug }}-${{ env.FFMPEG_KIT_NEXT_LIBS_SLUG }}-${{ runner.os }}
+          restore-keys: ffmpegkitnext-${{ env.FFMPEG_KIT_NEXT_VERSION }}-${{ env.FFMPEG_KIT_NEXT_LIBS_SLUG }}-
 
       - name: Install Nix
         if: steps.aar-cache.outputs.cache-hit != 'true'
@@ -134,13 +140,37 @@ jobs:
           # AAR 的 jni 目录按 jni/<abi>/ 存放，把它列出来核对
           unzip -l "${AAR}" | awk '$4 ~ /^jni\// { split($4, p, "/"); print p[2] }' | sort -u | tee /tmp/aar-abis.txt
 
-          # 这个检查是「软」的：libx264/libx265 有可能是静态链进 libavcodec.so 的，
-          # 此时按文件名 grep 不到。真失败的信号在构建期的 "Invalid configuration
-          # detected: GPL library x264 enabled without --enable-gpl flag"。
-          # 这里只做提示，不 fail —— 误报会挡住一次 40 分钟的构建。
-          echo "--- 尝试确认 GPL 库 ---"
-          unzip -l "${AAR}" | grep -Ei 'x264|x265' \
-            || echo "::notice::未按文件名找到 libx264/libx265，可能已静态链接进 libavcodec.so；建议装机后用「媒体信息」页确认 H.264 软编可用"
+          # 硬校验：编码器必须真的躺在 libavcodec.so 里。
+          #
+          # 上面那一串 --enable-lib-* 只是「请求」——构建脚本对不认识的选项是
+          # **静默忽略**的（不报错、不退出），所以「构建成功」根本不能证明库编进去了。
+          # 唯一可靠的信号是把产物拆开、从二进制里把编码器名抠出来。
+          #
+          # v1.0.5 就是栽在这里：漏了 --enable-lib-android-media-codec，
+          # 构建一路绿灯，装到机器上每个转码任务都 "Encoder not found"。
+          echo "--- 校验关键编码器（缺失即 fail）---"
+          SO="$(unzip -l "${AAR}" | awk '/libavcodec\.so/ { print $4 }' | head -1)"
+          if [ -z "${SO}" ]; then
+            echo "::error::AAR 里找不到 libavcodec.so"
+            exit 1
+          fi
+          unzip -p "${AAR}" "${SO}" > /tmp/libavcodec.so
+          ls -lh /tmp/libavcodec.so
+
+          MISSING=0
+          for enc in libx264 libx265 h264_mediacodec hevc_mediacodec libmp3lame libopus libvpx libass; do
+            if grep -aq "${enc}" /tmp/libavcodec.so; then
+              echo "  [OK]   ${enc}"
+            else
+              echo "::error::libavcodec.so 缺少 ${enc} —— 构建参数可能被静默忽略，或该库构建失败"
+              MISSING=1
+            fi
+          done
+          if [ "${MISSING}" -ne 0 ]; then
+            echo "::error::AAR 缺少必需编码器，拒绝继续（装上去必然报 Encoder not found）"
+            exit 1
+          fi
+          echo "全部关键编码器就位"
 
       - name: Upload AAR repository
         uses: actions/upload-artifact@v4
