@@ -27,6 +27,7 @@ import com.zhiwei.ffmpegx.core.hw.HwStrategy
 import com.zhiwei.ffmpegx.core.hw.VideoCodec
 import com.zhiwei.ffmpegx.core.settings.AppSettings
 import com.zhiwei.ffmpegx.core.settings.ThemeMode
+import com.zhiwei.ffmpegx.ui.components.BottomBarReserve
 import com.zhiwei.ffmpegx.ui.components.ChoiceChips
 import com.zhiwei.ffmpegx.ui.components.DropdownField
 import com.zhiwei.ffmpegx.ui.components.InfoRow
@@ -170,7 +171,8 @@ fun SettingsScreen(viewModel: SettingsViewModel = hiltViewModel()) {
             }
         }
 
-        Spacer(Modifier.height(24.dp))
+        // 悬浮底栏压在内容之上，末尾留出它的高度
+        Spacer(Modifier.height(BottomBarReserve))
     }
 }
 

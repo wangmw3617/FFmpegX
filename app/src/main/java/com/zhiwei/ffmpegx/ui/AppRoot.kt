@@ -16,8 +16,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.navigationBars
-import androidx.compose.foundation.layout.statusBars
-import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -32,15 +31,17 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
+import androidx.compose.material3.TopAppBar
+import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.style.TextOverflow
-import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -111,27 +112,10 @@ private val TOP_LEVEL_TABS = listOf(
     TopLevelTab("设置", Icons.Default.Settings, SettingsRoute),
 )
 
-/** 顶栏/底栏的内容高度（不含系统栏内边距） */
-private val TOP_BAR_HEIGHT = 56.dp
+/** 悬浮底栏的高度（不含外留白与手势条内边距） */
 private val BOTTOM_BAR_HEIGHT = 64.dp
-
-/**
- * 顶栏占位。
- *
- * 采样层里用它把内容让开，玻璃条则叠在它上面 —— 两者尺寸修饰符必须
- * 完全一致，否则内容会被压住或露出空隙。所以这里和 [GlassTopBar] 共用
- * 同一组常量与同一套 `windowInsetsPadding + height` 组合。
- *
- * 必须标 `@Composable`：`WindowInsets.statusBars` 是 `@Composable`
- * `@ReadOnlyComposable` 的取值器，在普通函数里读不到。
- */
-@Composable
-private fun Modifier.topBarSlot(): Modifier =
-    fillMaxWidth().windowInsetsPadding(WindowInsets.statusBars).height(TOP_BAR_HEIGHT)
-
-@Composable
-private fun Modifier.bottomBarSlot(): Modifier =
-    fillMaxWidth().windowInsetsPadding(WindowInsets.navigationBars).height(BOTTOM_BAR_HEIGHT)
+private val BOTTOM_BAR_MARGIN = 10.dp
+private val BOTTOM_BAR_SIDE_MARGIN = 14.dp
 
 @Composable
 fun AppRoot(settings: AppSettings) {
@@ -156,12 +140,33 @@ fun AppRoot(settings: AppSettings) {
     }
 
     Box(Modifier.fillMaxSize()) {
-        // ① 采样层：背景色斑 + 全部页面内容。玻璃条从这里取像素。
+        // ① 采样层：背景色斑 + 全部页面内容。
+        //
+        // 内容**铺满整屏**，不给底栏预留位置 —— 这样它能滚到悬浮底栏下面，
+        // 玻璃才有东西可以模糊。早先是给底栏留了一条空档，玻璃只能糊到
+        // 一层背景渐变，模糊前后没有差别，看着就是一块不透明的色板。
+        // 各一级页面自己在内容末尾留出 BottomBarReserve，避免最后一项被挡住。
         AppBackground(backdrop) {
             Column(Modifier.fillMaxSize()) {
-                // 给顶栏让位。内容不进玻璃条底下 —— 工具页表单密集，
-                // 被玻璃压住会挡住输入框，所以玻璃只糊背景色斑。
-                Spacer(Modifier.topBarSlot())
+                // 顶栏不加玻璃效果：容器透明，让背景色斑自然延伸上来，
+                // 视觉上更连贯，也不会在顶部压出一块厚重的板。
+                TopAppBar(
+                    title = {
+                        Text(
+                            text = title,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                    },
+                    navigationIcon = {
+                        if (!isTopLevel) {
+                            IconButton(onClick = { navController.popBackStack() }) {
+                                Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "返回")
+                            }
+                        }
+                    },
+                    colors = TopAppBarDefaults.topAppBarColors(containerColor = Color.Transparent),
+                )
 
                 NavHost(
                     navController = navController,
@@ -192,82 +197,28 @@ fun AppRoot(settings: AppSettings) {
                     composable<ProbeRoute> { ProbeScreen() }
                     composable<RawCommandRoute> { ConsoleToolScreen() }
                 }
-
-                if (isTopLevel) Spacer(Modifier.bottomBarSlot())
             }
         }
 
         // ② 玻璃层。必须是采样层的**兄弟**且排在后面：被包在采样层里的话，
         //    玻璃采到的是自己，会递归成一团糊。
-        Column(Modifier.fillMaxSize()) {
-            GlassTopBar(
-                title = title,
-                showBack = !isTopLevel,
-                onBack = { navController.popBackStack() },
+        if (isTopLevel) {
+            GlassBottomBar(
+                navController = navController,
+                destination = destination,
                 backdrop = backdrop,
+                modifier = Modifier.align(Alignment.BottomCenter),
             )
-            Spacer(Modifier.weight(1f))
-            if (isTopLevel) {
-                GlassBottomBar(
-                    navController = navController,
-                    destination = destination,
-                    backdrop = backdrop,
-                )
-            }
         }
     }
 }
 
 /**
- * 玻璃顶栏。
+ * 悬浮玻璃底栏。
  *
- * 尺寸修饰符与 [topBarSlot] 保持一致；`liquidGlass` 写在 `windowInsetsPadding`
- * 之前，这样玻璃覆盖的是「状态栏 + 内容高度」整块区域，而文字仍然避开状态栏。
- *
- * ⚠️ 形状**必须**是 `CornerBasedShape`。这里原来传的是 `RectangleShape`，
- * 它不是 `CornerBasedShape`，而 backdrop 的 `lens` 效果拿不到圆角半径时
- * 会直接抛 `UnsupportedOperationException("Only CornerBasedShape is supported
- * in lens effects.")` —— 且发生在绘制阶段，首帧就把应用崩掉。
- * 底边圆角与底栏的顶边圆角对称，观感上也更连贯。
- */
-@Composable
-private fun GlassTopBar(
-    title: String,
-    showBack: Boolean,
-    onBack: () -> Unit,
-    backdrop: Backdrop,
-    modifier: Modifier = Modifier,
-) {
-    Row(
-        modifier
-            .fillMaxWidth()
-            .liquidGlass(backdrop, RoundedCornerShape(bottomStart = 22.dp, bottomEnd = 22.dp))
-            .windowInsetsPadding(WindowInsets.statusBars)
-            .height(TOP_BAR_HEIGHT),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        if (showBack) {
-            IconButton(onClick = onBack) {
-                Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "返回")
-            }
-        } else {
-            Spacer(Modifier.width(20.dp))
-        }
-        Text(
-            text = title,
-            style = MaterialTheme.typography.titleLarge,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-        )
-        Spacer(Modifier.width(20.dp))
-    }
-}
-
-/**
- * 玻璃底栏。
- *
- * 顶角做了圆角，让玻璃的折射边缘露出来 —— 直角矩形的边缘折射看不见。
- * 选中态沿用主题主色，未选中用 onSurfaceVariant。
+ * 做成悬浮（左右与底部都留白、四角圆角）而不是通栏贴边：
+ * 四周留白能让背景与内容从边上透出来，玻璃的「一片浮在内容之上」的
+ * 观感才成立；通栏贴边时玻璃只和屏幕边缘相接，看起来就像一块实心色板。
  */
 @Composable
 private fun GlassBottomBar(
@@ -282,47 +233,99 @@ private fun GlassBottomBar(
     Row(
         modifier
             .fillMaxWidth()
-            .liquidGlass(backdrop, RoundedCornerShape(topStart = 22.dp, topEnd = 22.dp))
+            // 修饰符顺序有讲究：先避开手势条，再留出悬浮的空白，
+            // 最后才是 liquidGlass —— 它写在内层，玻璃只覆盖底栏本身，
+            // 不会把外面的留白也涂上。
             .windowInsetsPadding(WindowInsets.navigationBars)
-            .height(BOTTOM_BAR_HEIGHT),
+            .padding(horizontal = BOTTOM_BAR_SIDE_MARGIN, vertical = BOTTOM_BAR_MARGIN)
+            .height(BOTTOM_BAR_HEIGHT)
+            .liquidGlass(
+                backdrop = backdrop,
+                shape = RoundedCornerShape(26.dp),
+                blurRadius = 22.dp,
+                lensAmount = 12.dp,
+            ),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         TOP_LEVEL_TABS.forEach { tab ->
             val selected = destination?.hasRoute(tab.route::class) == true
-            val tint = if (selected) {
-                MaterialTheme.colorScheme.primary
-            } else {
-                MaterialTheme.colorScheme.onSurfaceVariant
-            }
-            Column(
-                modifier = Modifier
-                    .weight(1f)
-                    .fillMaxHeight()
-                    .clickable(role = Role.Tab) {
-                        if (!selected) {
-                            navController.navigate(tab.route) {
-                                popUpTo(HomeRoute) { saveState = true }
-                                launchSingleTop = true
-                                restoreState = true
-                            }
+            GlassTab(
+                tab = tab,
+                selected = selected,
+                badgeCount = if (tab.route == QueueRoute) activeCount else 0,
+                backdrop = backdrop,
+                modifier = Modifier.weight(1f).fillMaxHeight(),
+                onClick = {
+                    if (!selected) {
+                        navController.navigate(tab.route) {
+                            popUpTo(HomeRoute) { saveState = true }
+                            launchSingleTop = true
+                            restoreState = true
                         }
-                    },
-                verticalArrangement = Arrangement.Center,
-                horizontalAlignment = Alignment.CenterHorizontally,
-            ) {
-                if (tab.route == QueueRoute && activeCount > 0) {
-                    BadgedBox(badge = { Badge { Text(activeCount.toString()) } }) {
-                        Icon(tab.icon, contentDescription = tab.label, tint = tint)
                     }
-                } else {
+                },
+            )
+        }
+    }
+}
+
+/**
+ * 单个底栏项。
+ *
+ * 选中时在图标与文字后面垫一层**胶囊玻璃**。它引用的是同一个 backdrop，
+ * 于是会再采一次底栏背后的内容 —— 看上去就是叠在玻璃上的一小片玻璃，
+ * 而不是一块纯色高亮。未选中时什么都没有，只有图标与文字。
+ */
+@Composable
+private fun GlassTab(
+    tab: TopLevelTab,
+    selected: Boolean,
+    badgeCount: Int,
+    backdrop: Backdrop,
+    modifier: Modifier = Modifier,
+    onClick: () -> Unit,
+) {
+    Box(
+        modifier.clickable(role = Role.Tab, onClick = onClick),
+        contentAlignment = Alignment.Center,
+    ) {
+        if (selected) {
+            Box(
+                Modifier
+                    .fillMaxWidth()
+                    .fillMaxHeight()
+                    .padding(horizontal = 6.dp, vertical = 7.dp)
+                    .liquidGlass(
+                        backdrop = backdrop,
+                        shape = RoundedCornerShape(percent = 50),
+                        blurRadius = 10.dp,
+                        lensAmount = 8.dp,
+                    ),
+            )
+        }
+
+        val tint = if (selected) {
+            MaterialTheme.colorScheme.primary
+        } else {
+            MaterialTheme.colorScheme.onSurfaceVariant
+        }
+        Column(
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.Center,
+        ) {
+            if (badgeCount > 0) {
+                BadgedBox(badge = { Badge { Text(badgeCount.toString()) } }) {
                     Icon(tab.icon, contentDescription = tab.label, tint = tint)
                 }
-                Text(
-                    text = tab.label,
-                    style = MaterialTheme.typography.labelMedium,
-                    color = tint,
-                )
+            } else {
+                Icon(tab.icon, contentDescription = tab.label, tint = tint)
             }
+            Spacer(Modifier.height(2.dp))
+            Text(
+                text = tab.label,
+                style = MaterialTheme.typography.labelMedium,
+                color = tint,
+            )
         }
     }
 }
@@ -341,7 +344,6 @@ private fun titleFor(destination: NavDestination?): String = when {
     destination.hasRoute(ConcatRoute::class) -> "视频拼接"
     destination.hasRoute(SubtitleRoute::class) -> "字幕处理"
     destination.hasRoute(OverlayRoute::class) -> "水印与画中画"
-    // 以下 6 个是后加的工具，原先漏在这里，导致顶栏标题退化成 "FFmpegX"
     destination.hasRoute(RotateRoute::class) -> "旋转翻转"
     destination.hasRoute(CropRoute::class) -> "画面裁剪"
     destination.hasRoute(ThumbnailRoute::class) -> "提取画面"

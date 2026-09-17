@@ -34,6 +34,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.zhiwei.ffmpegx.core.media.MediaFiles
 import com.zhiwei.ffmpegx.core.task.TaskEntity
 import com.zhiwei.ffmpegx.core.task.TaskStatus
+import com.zhiwei.ffmpegx.ui.components.BottomBarReserve
 import com.zhiwei.ffmpegx.ui.components.ChoiceChips
 import com.zhiwei.ffmpegx.ui.components.ClearFinishedDialog
 import com.zhiwei.ffmpegx.ui.components.DeleteTaskDialog
@@ -117,7 +118,7 @@ fun QueueScreen(viewModel: TasksViewModel = hiltViewModel()) {
             LazyColumn(
                 modifier = Modifier.fillMaxSize(),
                 contentPadding = androidx.compose.foundation.layout.PaddingValues(
-                    start = 16.dp, end = 16.dp, bottom = 24.dp,
+                    start = 16.dp, end = 16.dp, bottom = BottomBarReserve,
                 ),
                 verticalArrangement = Arrangement.spacedBy(10.dp),
             ) {
@@ -191,7 +192,7 @@ fun ConsoleScreen(viewModel: TasksViewModel = hiltViewModel()) {
                 modifier = Modifier
                     .fillMaxSize()
                     .padding(horizontal = 16.dp),
-                contentPadding = androidx.compose.foundation.layout.PaddingValues(bottom = 24.dp),
+                contentPadding = androidx.compose.foundation.layout.PaddingValues(bottom = BottomBarReserve),
                 verticalArrangement = Arrangement.spacedBy(2.dp),
             ) {
                 items(lines) { line ->

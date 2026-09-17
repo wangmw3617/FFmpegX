@@ -54,6 +54,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.zhiwei.ffmpegx.core.hw.VideoCodec
 import com.zhiwei.ffmpegx.core.task.TaskEntity
 import com.zhiwei.ffmpegx.core.task.TaskFeature
+import com.zhiwei.ffmpegx.ui.components.BottomBarReserve
 import com.zhiwei.ffmpegx.ui.components.DeleteTaskDialog
 import com.zhiwei.ffmpegx.ui.components.EmptyState
 import com.zhiwei.ffmpegx.ui.components.InfoRow
@@ -232,7 +233,8 @@ fun HomeScreen(
             )
         }
 
-        Spacer(Modifier.height(24.dp))
+        // 悬浮底栏压在内容之上，末尾留出它的高度，否则最后一张卡片够不到
+        Spacer(Modifier.height(BottomBarReserve))
     }
 }
 
