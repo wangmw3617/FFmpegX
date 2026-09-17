@@ -134,14 +134,26 @@ for arch in ${ALL_ARCHS}; do
   fi
 done
 
+# 默认库清单：**必须与 CI（.github/workflows/build.yml）保持一致**。
+# 每一项都对应 App 里真实会生成的编码器参数，少一个就会有功能在真机上
+# 直接报 "Error opening output files: Encoder not found"。
+#
+# ⚠️ android-media-codec 默认是 no，必须显式开启。不开的话 MediaCodec 硬编硬解
+# 在 libavcodec 里根本不存在，而 App 会依据设备 MediaCodec 能力生成
+# `-c:v h264_mediacodec` —— 于是每一个走「智能/速度优先」策略的任务都会失败。
+DEFAULT_LIBS="android-media-codec lame opus libvorbis libvpx libass"
+
 LIB_FLAGS=()
 if [ "${ENABLE_GPL}" = "yes" ]; then
-  # ⚠️ 关键：不加 --enable-gpl 就没有 libx264/libx265，
+  # 不加 --enable-gpl 就没有 libx264/libx265，
   # FFmpegX 的「兼容优先」（全软编码）策略会因为找不到软件编码器而失效。
   LIB_FLAGS+=("--enable-gpl")
-  LIB_FLAGS+=("--enable-lib-x264")
-  LIB_FLAGS+=("--enable-lib-x265")
+  DEFAULT_LIBS="x264 x265 ${DEFAULT_LIBS}"
 fi
+
+for lib in ${DEFAULT_LIBS}; do
+  LIB_FLAGS+=("--enable-lib-${lib}")
+done
 
 if [ -n "${EXTRA_LIBS}" ]; then
   IFS=',' read -r -a EXTRA_ARR <<< "${EXTRA_LIBS}"
