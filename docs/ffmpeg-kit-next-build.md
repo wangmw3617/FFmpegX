@@ -33,7 +33,7 @@ git clone https://github.com/arthenica/ffmpeg-kit-next.git ../ffmpeg-kit-next
 脚本做的事：
 - 校验源码目录与宿主环境
 - 把 FFmpegX 的 ABI 列表翻译成上游的 `--disable-arch-*` 参数（裁掉用不到的架构）
-- 加 `--enable-gpl --enable-lib-x264 --enable-lib-x265`（**必须**，见第 4 节）
+- 启用 App 真实用到的**全部**外部库（少一个就会有功能报错，见第 4 节）
 - 调用 `nix-android.sh -p android-r27d`
 - 校验产物并打印后续要填的配置
 
@@ -43,8 +43,8 @@ git clone https://github.com/arthenica/ffmpeg-kit-next.git ../ffmpeg-kit-next
 # 只出 arm64-v8a，构建时间与产物体积都大幅降低
 ./scripts/build-ffmpeg-kit-next.sh --abis arm64-v8a
 
-# 额外启用字幕渲染需要的外部库
-./scripts/build-ffmpeg-kit-next.sh --with libass,fontconfig,freetype,harfbuzz
+# 在默认清单之外追加库
+./scripts/build-ffmpeg-kit-next.sh --with openh264
 
 # 不用 Nix（需自行配好 SDK / NDK r27d 环境变量）
 ./scripts/build-ffmpeg-kit-next.sh --no-nix
@@ -146,8 +146,13 @@ ffmpegKitNext = "9.0.0"
 → 构建时用 `--abis` 裁掉不用的架构，并同步调整 `gradle.properties` 里的
 `ffmpegx.abis`，两边保持一致，否则会白装一份用不到的 `.so`。
 
+**运行时每个任务都秒失败，报 `Error opening output files: Encoder not found`**
+→ AAR 里缺编码器，最常见的是漏了 `--enable-lib-android-media-codec`（硬编硬解）。
+这类问题**构建期完全不会报错**，只能从产物里查：解压 APK 取出
+`lib/<abi>/libavcodec.so`，在里面搜编码器名（如 `h264_mediacodec`、`libx264`）。
+CI 的 `Verify AAR` 步骤已经内置了这道硬校验。
+
 **想减小体积又保留全部功能**
 → 构建时用 `--disable-lib-<name>` 关掉用不到的外部库，
-比 `--enable-all-libraries` 小得多。FFmpegX 目前用到的主要是
-x264/x265（软编）、libass/fontconfig/freetype（字幕烧录）、
-libwebp（GIF/图片）。
+比 `--enable-lib-all` 小得多。但**不要删第 4 节表格里的任何一项** ——
+每一项都对应 App 里真实会生成的参数。
