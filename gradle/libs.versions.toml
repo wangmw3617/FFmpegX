@@ -39,7 +39,7 @@ coil = "3.2.0"
 serialization = "1.8.1"
 coroutines = "1.10.2"
 documentfile = "1.1.0"
-splashscreen = "1.0.1"
+splashscreen = "1.2.0"
 
 # ---------------------------------------------------------------------------
 # FFmpeg 核心：ffmpeg-kit-next（arthenica 官方续作）
