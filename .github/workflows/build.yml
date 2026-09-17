@@ -414,6 +414,9 @@ jobs:
       - name: Publish GitHub Release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # 本 job 没有 checkout，没有 .git 目录，gh 无法自行推断仓库，
+          # 必须显式告知，否则报 "not a git repository"。
+          GH_REPO: ${{ github.repository }}
         run: |
           set -e
           TAG="${GITHUB_REF_NAME}"
