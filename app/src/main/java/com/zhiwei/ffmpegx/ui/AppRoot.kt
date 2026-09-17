@@ -122,10 +122,15 @@ private val BOTTOM_BAR_HEIGHT = 64.dp
  * 采样层里用它把内容让开，玻璃条则叠在它上面 —— 两者尺寸修饰符必须
  * 完全一致，否则内容会被压住或露出空隙。所以这里和 [GlassTopBar] 共用
  * 同一组常量与同一套 `windowInsetsPadding + height` 组合。
+ *
+ * 必须标 `@Composable`：`WindowInsets.statusBars` 是 `@Composable`
+ * `@ReadOnlyComposable` 的取值器，在普通函数里读不到。
  */
+@Composable
 private fun Modifier.topBarSlot(): Modifier =
     fillMaxWidth().windowInsetsPadding(WindowInsets.statusBars).height(TOP_BAR_HEIGHT)
 
+@Composable
 private fun Modifier.bottomBarSlot(): Modifier =
     fillMaxWidth().windowInsetsPadding(WindowInsets.navigationBars).height(BOTTOM_BAR_HEIGHT)
 
