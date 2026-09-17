@@ -179,6 +179,17 @@ class ToolViewModel @Inject constructor(
      */
     private var currentInput: FileResolver.Resolved? = null
 
+    /**
+     * 附加输入（拼接片段 / 字幕 / 水印素材）的解析结果。
+     *
+     * 与 [currentInput] 同理：它们各自也持有一个 reusable 的 `ffkitsaf:` url，
+     * 不记下来就没法在替换 / 移除 / 页面销毁时释放，safIdMap 会持续增长。
+     * [extraResolved] 与 `form.extraInputs` 一一对应（同序）。
+     */
+    private val extraResolved = mutableListOf<FileResolver.Resolved>()
+    private var subtitleResolved: FileResolver.Resolved? = null
+    private var overlayResolved: FileResolver.Resolved? = null
+
     init {
         viewModelScope.launch {
             settingsRepository.settings.collect { settings ->
@@ -238,7 +249,7 @@ class ToolViewModel @Inject constructor(
         viewModelScope.launch {
             _state.update { it.copy(busy = true, busyMessage = "正在读取文件…", error = null) }
             // 先把上一个输入的 SAF url 释放掉，避免它在 safIdMap 里越积越多
-            releaseCurrentInput()
+            releaseMainInput()
             val resolved = FileResolver.resolve(context, uri)
             resolved.fold(
                 onSuccess = { r ->
@@ -307,10 +318,33 @@ class ToolViewModel @Inject constructor(
         }
     }
 
-    /** 释放当前输入占用的 SAF url / 临时副本 */
-    private fun releaseCurrentInput() {
-        currentInput?.let { FileResolver.cleanup(it) }
+    /**
+     * 释放一个解析结果占用的资源。
+     *
+     * SAF url 走队列的引用计数：如果它已经被某个任务持有（用户点了「开始」），
+     * 这里就不能注销，否则那个任务会报「找不到 SAF id」而失败。
+     *
+     * 临时副本不在这里删 —— 命令里存的是绝对路径，它可能正被排队中的任务引用。
+     * 这些文件在应用缓存目录下，由系统在空间紧张时回收。
+     */
+    private fun releaseResolved(r: FileResolver.Resolved) {
+        taskRepository.releaseSafUrlIfUnused(r.safUrl)
+    }
+
+    /** 释放主输入 */
+    private fun releaseMainInput() {
+        currentInput?.let { releaseResolved(it) }
         currentInput = null
+    }
+
+    /** 释放附加输入（拼接片段 / 字幕 / 水印素材） */
+    private fun releaseSideInputs() {
+        extraResolved.forEach { releaseResolved(it) }
+        extraResolved.clear()
+        subtitleResolved?.let { releaseResolved(it) }
+        subtitleResolved = null
+        overlayResolved?.let { releaseResolved(it) }
+        overlayResolved = null
     }
 
     fun onPickExtra(uri: Uri) {
@@ -318,6 +352,8 @@ class ToolViewModel @Inject constructor(
             _state.update { it.copy(busy = true, busyMessage = "正在读取文件…") }
             FileResolver.resolve(context, uri).fold(
                 onSuccess = { r ->
+                    // 记下解析结果，否则它的 ffkitsaf: url 永远没人释放
+                    extraResolved += r
                     _state.update {
                         it.copy(
                             busy = false,
@@ -335,8 +371,16 @@ class ToolViewModel @Inject constructor(
         }
     }
 
-    fun removeExtra(index: Int) = update {
-        it.copy(extraInputs = it.extraInputs.toMutableList().also { list -> list.removeAt(index) })
+    fun removeExtra(index: Int) {
+        // 先释放被移除片段占用的 SAF url，再改列表（extraResolved 与 extraInputs 同序）
+        if (index in extraResolved.indices) releaseResolved(extraResolved.removeAt(index))
+        update {
+            it.copy(
+                extraInputs = it.extraInputs.toMutableList().also { list ->
+                    if (index in list.indices) list.removeAt(index)
+                },
+            )
+        }
     }
 
     fun onPickSubtitle(uri: Uri) {
@@ -344,6 +388,8 @@ class ToolViewModel @Inject constructor(
             _state.update { it.copy(busy = true, busyMessage = "正在读取字幕…") }
             FileResolver.resolve(context, uri).fold(
                 onSuccess = { r ->
+                    subtitleResolved?.let { releaseResolved(it) }
+                    subtitleResolved = r
                     _state.update {
                         it.copy(busy = false, form = it.form.copy(subtitlePath = r.ffmpegInput))
                     }
@@ -361,6 +407,8 @@ class ToolViewModel @Inject constructor(
             _state.update { it.copy(busy = true, busyMessage = "正在读取素材…") }
             FileResolver.resolve(context, uri).fold(
                 onSuccess = { r ->
+                    overlayResolved?.let { releaseResolved(it) }
+                    overlayResolved = r
                     _state.update {
                         it.copy(busy = false, form = it.form.copy(overlayPath = r.ffmpegInput))
                     }
@@ -674,8 +722,18 @@ class ToolViewModel @Inject constructor(
             flat.contains("subtitles=") ||
             commands.any { cmd -> cmd.any { it.contains("scale=") || it.contains("overlay") || it.contains("palette") } }
 
-        val isPureScale = flat.contains("-vf") &&
-            commands.all { cmd -> cmd.none { it.contains("overlay") || it.contains("palette") || it.contains("subtitles") } }
+        // 取 -vf 后面的滤镜串（filterGraph 会把多个滤镜用逗号拼在一起）
+        val vfString = commands.asSequence()
+            .mapNotNull { cmd -> cmd.indexOf("-vf").takeIf { it >= 0 }?.let { cmd.getOrNull(it + 1) } }
+            .firstOrNull()
+        // 「纯缩放」= 存在 -vf，且每个滤镜都是几何类（scale / setsar / fps）。
+        // 含 overlay / palette / subtitles，或用了 -filter_complex，都算复杂链路，Vulkan 无法整体接管。
+        val isPureScale = vfString != null &&
+            !flat.contains("-filter_complex") &&
+            !flat.contains("-lavfi") &&
+            vfString.split(",").filter { it.isNotBlank() }.all { f ->
+                f.substringBefore('=').trim().lowercase() in setOf("scale", "setsar", "fps")
+            }
 
         val bitrate = when {
             form.videoBitrate > 0 -> form.videoBitrate
@@ -736,7 +794,11 @@ class ToolViewModel @Inject constructor(
                 existing.nameWithoutExtension + "." + form.container.extension)
         }
         val dir = MediaFiles.defaultOutputDir(context, state.settings.outputDir)
-        val base = MediaFiles.baseNameOf(form.inputPath)
+        // 用展示名而不是 inputPath：SAF 直读时 inputPath 是 `ffkitsaf:xxx` 这类虚拟协议串，
+        // 拿它当文件名会得到「ffkitsaf_3_converted.mp4」这种莫名其妙的结果。
+        val base = form.inputDisplayName.takeIf { it.isNotBlank() }
+            ?.let { MediaFiles.baseNameOf(it) }
+            ?: MediaFiles.baseNameOf(form.inputPath)
         val suffix = featureSuffix(feature)
         return MediaFiles.uniqueOutputFile(dir, "$base$suffix", form.container.extension)
     }
@@ -778,7 +840,11 @@ class ToolViewModel @Inject constructor(
     fun start() {
         val current = _state.value
         if (!current.nativeReady) {
-            _state.update { it.copy(error = "原生库未构建，请先执行 scripts/build-ffmpeg-android.sh") }
+            // 后端加载失败的真实原因在 loadError() 里（KitBackend 已把 cause 链带出来）
+            val detail = FFmpegNative.loadError().takeIf { it.isNotBlank() }
+            _state.update {
+                it.copy(error = "FFmpeg 核心未就绪" + (detail?.let { d -> "：$d" } ?: "，请重新安装应用"))
+            }
             return
         }
         if (current.form.inputPath.isBlank() && feature != TaskFeature.CONSOLE) {
@@ -833,8 +899,9 @@ class ToolViewModel @Inject constructor(
     }
 
     override fun onCleared() {
-        // 释放 SAF url。临时副本不删：用户可能还要重跑，缓存目录由系统在空间紧张时清理。
-        releaseCurrentInput()
+        // 释放 SAF url。被队列持有的那些不会被注销（见 releaseResolved）。
+        releaseMainInput()
+        releaseSideInputs()
         super.onCleared()
     }
 }
