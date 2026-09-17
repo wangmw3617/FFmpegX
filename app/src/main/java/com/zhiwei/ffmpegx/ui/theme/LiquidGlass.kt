@@ -6,6 +6,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.shape.CornerBasedShape
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
@@ -124,7 +125,9 @@ private fun BackgroundGlow() {
  *
  * @param backdrop 采样源。为 null 时退化成普通半透明表面 —— 这样即使玻璃层
  *        没准备好，界面也不会变成透明的「空洞」。
- * @param shape 玻璃的形状（圆角矩形 / 胶囊等）
+ * @param shape 玻璃的形状。**必须是 [CornerBasedShape]**（`RoundedCornerShape` /
+ *        `CutCornerShape` / `CircleShape`）才能拿到折射效果；传 `RectangleShape`
+ *        这类非圆角形状不会崩，但会自动退化成「模糊 + 提亮」，见下方说明。
  * @param blurRadius 背景模糊半径，越大越「厚」
  * @param lensAmount 边缘折射强度，这是液态玻璃最标志性的观感
  */
@@ -140,6 +143,18 @@ fun Modifier.liquidGlass(
     if (backdrop == null || Build.VERSION.SDK_INT < Build.VERSION_CODES.S) {
         return this.background(MaterialTheme.colorScheme.surface.copy(alpha = 0.92f), shape)
     }
+    // ⚠️ lens 需要形状的圆角半径来构造 SDF，库里是这么写的：
+    //
+    //     val shape = shape as? CornerBasedShape ?: return null
+    //     ...  if (cornerRadii != null) { 用半径画折射 } else { 抛异常 }
+    //
+    // 拿不到半径就直接 `throw UnsupportedOperationException(
+    // "Only CornerBasedShape is supported in lens effects.")`。
+    //
+    // 关键在于它**发生在绘制阶段**：不是「效果没生效」，而是主线程直接崩、
+    // 应用秒退。传一次 RectangleShape 就会闪退，所以这里必须先判断形状，
+    // 拿不到圆角就只画模糊与提亮 —— 视觉上少一层折射，但绝不崩。
+    val supportsLens = shape is CornerBasedShape
     return this.drawBackdrop(
         backdrop = backdrop,
         shape = { shape },
@@ -147,7 +162,9 @@ fun Modifier.liquidGlass(
             // vibrancy 先把背景色提亮饱和，否则玻璃会显得发灰
             vibrancy()
             blur(blurRadius.toPx())
-            lens(lensAmount.toPx(), lensAmount.toPx() * 2f)
+            if (supportsLens) {
+                lens(lensAmount.toPx(), lensAmount.toPx() * 2f)
+            }
         },
     )
 }

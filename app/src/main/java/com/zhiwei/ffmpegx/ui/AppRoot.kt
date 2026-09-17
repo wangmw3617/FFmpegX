@@ -37,7 +37,6 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.RectangleShape
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.style.TextOverflow
@@ -224,6 +223,12 @@ fun AppRoot(settings: AppSettings) {
  *
  * 尺寸修饰符与 [topBarSlot] 保持一致；`liquidGlass` 写在 `windowInsetsPadding`
  * 之前，这样玻璃覆盖的是「状态栏 + 内容高度」整块区域，而文字仍然避开状态栏。
+ *
+ * ⚠️ 形状**必须**是 `CornerBasedShape`。这里原来传的是 `RectangleShape`，
+ * 它不是 `CornerBasedShape`，而 backdrop 的 `lens` 效果拿不到圆角半径时
+ * 会直接抛 `UnsupportedOperationException("Only CornerBasedShape is supported
+ * in lens effects.")` —— 且发生在绘制阶段，首帧就把应用崩掉。
+ * 底边圆角与底栏的顶边圆角对称，观感上也更连贯。
  */
 @Composable
 private fun GlassTopBar(
@@ -236,7 +241,7 @@ private fun GlassTopBar(
     Row(
         modifier
             .fillMaxWidth()
-            .liquidGlass(backdrop, RectangleShape)
+            .liquidGlass(backdrop, RoundedCornerShape(bottomStart = 22.dp, bottomEnd = 22.dp))
             .windowInsetsPadding(WindowInsets.statusBars)
             .height(TOP_BAR_HEIGHT),
         verticalAlignment = Alignment.CenterVertically,
