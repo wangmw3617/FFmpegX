@@ -1,5 +1,7 @@
 package com.zhiwei.ffmpegx.ui.theme
 
+import android.os.Build
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Box
@@ -7,6 +9,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Shape
@@ -30,16 +33,20 @@ import com.kyant.backdrop.effects.vibrancy
  *
  * ## 三个概念，缺一不可
  *
- * 1. [rememberLayerBackdrop] 建一个「背景层」；
- * 2. `Modifier.layerBackdrop(backdrop)` 标记**哪些内容会被玻璃采样**
- *    （没有这一步，玻璃层拿不到任何像素，画出来是全透明的）；
- * 3. `Modifier.drawBackdrop(backdrop, shape, effects)` 才是玻璃本身。
+ * 1. [rememberAppBackdrop] 建一个「背景层」；
+ * 2. `Modifier.layerBackdrop(backdrop)` 标记**哪些内容会被玻璃采样**；
+ * 3. `Modifier.liquidGlass(...)` 才是玻璃本身。
  *
- * ## 为什么必须配一层渐变背景
+ * **采样层与玻璃层必须是兄弟节点，且玻璃排在后面。**
+ * 如果玻璃被包在采样层内部，它采到的是自己 → 递归，什么都画不出来。
+ * 所以 [AppBackground] 只负责「渐变 + 页面内容」，玻璃条要写在它外面。
  *
- * 玻璃的本质是「模糊它下面的东西」。如果背景是纯色，模糊前后一模一样，
- * 看上去就只是普通半透明块 —— 完全看不出液态玻璃的质感。
- * 所以 [AppBackground] 铺了一层很淡的品牌色渐变，给玻璃提供可折射的层次。
+ * ## 为什么背景要有色斑
+ *
+ * 玻璃的本质是「模糊并折射它下面的东西」。纯色模糊前后一模一样，
+ * 一层平滑渐变模糊后也几乎看不出变化 —— 看上去就只是普通半透明块。
+ * 所以 [AppBackground] 在基色上叠了几个很淡的径向色斑：
+ * 模糊能看出层次，玻璃边缘的折射（lens）也才有东西可弯。
  *
  * ## 版本约束
  *
@@ -50,10 +57,10 @@ import com.kyant.backdrop.effects.vibrancy
 fun rememberAppBackdrop(): LayerBackdrop = rememberLayerBackdrop()
 
 /**
- * 应用背景层。
+ * 应用背景层，同时也是玻璃的采样源。
  *
- * 这层渐变同时也是 `layerBackdrop` 的采样源：它被标记为「背景」，
- * 上层的玻璃卡片就能从它身上取色与模糊。
+ * 它铺满全屏，并且**把 [content] 一起纳入采样范围** —— 这样页面内容滚到
+ * 玻璃条下面时，玻璃能真的把它糊掉，而不是只糊一层背景色。
  */
 @Composable
 fun AppBackground(
@@ -61,57 +68,71 @@ fun AppBackground(
     modifier: Modifier = Modifier,
     content: @Composable () -> Unit,
 ) {
-    val dark = isSystemInDarkTheme()
-    // 淡到几乎看不出是渐变，但足够让玻璃产生层次 —— 太浓会喧宾夺主
-    val brush = if (dark) {
-        Brush.verticalGradient(
-            listOf(
-                Color(0xFF101725),
-                Color(0xFF0B1220),
-                Color(0xFF0E1A1C),
-            ),
-        )
-    } else {
-        Brush.verticalGradient(
-            listOf(
-                Color(0xFFF7F9FF),
-                Color(0xFFFCFCFF),
-                Color(0xFFF4FAF9),
-            ),
-        )
+    Box(modifier.fillMaxSize().layerBackdrop(backdrop)) {
+        BackgroundGlow()
+        content()
     }
+}
 
-    Box(modifier.fillMaxSize()) {
-        // 被玻璃采样的那一层：渐变背景 + 全部页面内容
-        Box(
-            Modifier
-                .fillMaxSize()
-                .background(brush)
-                .layerBackdrop(backdrop),
-        ) {
-            content()
-        }
+/**
+ * 基色 + 几个径向色斑。
+ *
+ * 色斑刻意做得很淡：它的唯一作用是给玻璃提供「可被模糊出层次」的像素，
+ * 太浓会喧宾夺主，把信息阅读区搅花。
+ */
+@Composable
+private fun BackgroundGlow() {
+    val dark = isSystemInDarkTheme()
+    val base = if (dark) Color(0xFF0B1220) else Color(0xFFF7F9FF)
+    // 品牌蓝 + 青绿，和 Theme.kt 的主色/强调色同源
+    val blue = if (dark) Color(0xFF3B6BFF) else Color(0xFF2F6BFF)
+    val teal = if (dark) Color(0xFF00A38C) else Color(0xFF00796B)
+    val blueAlpha = if (dark) 0.30f else 0.16f
+    val tealAlpha = if (dark) 0.22f else 0.12f
+
+    Canvas(Modifier.fillMaxSize()) {
+        drawRect(base)
+        drawRect(
+            brush = Brush.radialGradient(
+                colors = listOf(blue.copy(alpha = blueAlpha), Color.Transparent),
+                center = Offset(size.width * 0.16f, size.height * 0.04f),
+                radius = size.minDimension * 1.05f,
+            ),
+            size = size,
+        )
+        drawRect(
+            brush = Brush.radialGradient(
+                colors = listOf(teal.copy(alpha = tealAlpha), Color.Transparent),
+                center = Offset(size.width * 0.92f, size.height * 0.78f),
+                radius = size.minDimension * 0.95f,
+            ),
+            size = size,
+        )
     }
 }
 
 /**
  * 把任意容器变成一块液态玻璃。
  *
- * @param backdrop 为 null 时退化成普通半透明表面 —— 这样即使玻璃层没准备好，
- *        界面也不会变成透明的「空洞」。
+ * @param backdrop 采样源。为 null 时退化成普通半透明表面 —— 这样即使玻璃层
+ *        没准备好，界面也不会变成透明的「空洞」。
  * @param shape 玻璃的形状（圆角矩形 / 胶囊等）
  * @param blurRadius 背景模糊半径，越大越「厚」
  * @param lensAmount 边缘折射强度，这是液态玻璃最标志性的观感
  */
+@Composable
 fun Modifier.liquidGlass(
     backdrop: Backdrop?,
     shape: Shape,
     blurRadius: Dp = 14.dp,
     lensAmount: Dp = 10.dp,
-): Modifier = if (backdrop == null) {
-    this.background(MaterialTheme.colorScheme.surface.copy(alpha = 0.92f), shape)
-} else {
-    this.drawBackdrop(
+): Modifier {
+    // RenderEffect 是 API 31 才有的。更低版本里 blur / lens 都是空操作，
+    // 玻璃会退化成一块「透明的洞」—— 还不如直接用半透明表面兜底。
+    if (backdrop == null || Build.VERSION.SDK_INT < Build.VERSION_CODES.S) {
+        return this.background(MaterialTheme.colorScheme.surface.copy(alpha = 0.92f), shape)
+    }
+    return this.drawBackdrop(
         backdrop = backdrop,
         shape = { shape },
         effects = {
