@@ -30,6 +30,7 @@ import com.zhiwei.ffmpegx.core.model.formatBitrate
 import com.zhiwei.ffmpegx.core.model.formatDurationPrecise
 import com.zhiwei.ffmpegx.core.model.formatSize
 import com.zhiwei.ffmpegx.ui.components.InfoRow
+import com.zhiwei.ffmpegx.ui.components.inputSourceLabel
 import com.zhiwei.ffmpegx.ui.components.SectionCard
 import com.zhiwei.ffmpegx.ui.components.WarningBanner
 import com.zhiwei.ffmpegx.ui.theme.MonospaceStyle
@@ -77,7 +78,8 @@ fun ProbeScreen(viewModel: DeviceViewModel = hiltViewModel()) {
                 InfoRow("时长", formatDurationPrecise(info.durationUs))
                 InfoRow("体积", formatSize(info.fileSizeBytes))
                 InfoRow("总码率", formatBitrate(info.bitRate))
-                InfoRow("路径", info.path)
+                // 直读 SAF 时 info.path 是 ffkitsaf:xxx 这类内部协议串，不该直接给用户看
+                InfoRow("来源", inputSourceLabel(info.path))
             }
 
             info.videoStreams.forEachIndexed { index, video ->
