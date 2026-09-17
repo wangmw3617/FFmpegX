@@ -235,7 +235,7 @@ data class RotateSpec(
     val flipHorizontal: Boolean = false,
     val flipVertical: Boolean = false,
     val video: VideoEncodeSpec,
-    val audio: AudioEncodeSpec,
+    val audio: AudioEncodeSpec?,
 )
 
 /** 画面裁剪 */
@@ -246,7 +246,7 @@ data class CropSpec(
     val width: Int,
     val height: Int,
     val video: VideoEncodeSpec,
-    val audio: AudioEncodeSpec,
+    val audio: AudioEncodeSpec?,
 )
 
 /** 视频变速 */
@@ -257,7 +257,7 @@ data class SpeedSpec(
     /** 保持音调，避免加速后声音变尖 */
     val keepPitch: Boolean = true,
     val video: VideoEncodeSpec,
-    val audio: AudioEncodeSpec,
+    val audio: AudioEncodeSpec?,
 )
 
 /** 去水印 / 区域遮挡 */
@@ -270,7 +270,7 @@ data class DelogoSpec(
     /** blur / delogo / mosaic */
     val mode: String = "blur",
     val video: VideoEncodeSpec,
-    val audio: AudioEncodeSpec,
+    val audio: AudioEncodeSpec?,
 )
 
 /** 图片转视频 */

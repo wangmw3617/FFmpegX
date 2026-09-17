@@ -595,7 +595,7 @@ object Commands {
         cmd.map("0:v:0?")
         applyVideoEncoding(cmd, plan, spec.video, 0.0)
         cmd.map("0:a:0?")
-        applyAudioEncoding(cmd, spec.audio)
+        spec.audio?.let { applyAudioEncoding(cmd, it) }
         cmd.output(spec.output)
         return cmd.build()
     }
@@ -619,7 +619,7 @@ object Commands {
         cmd.map("0:v:0?")
         applyVideoEncoding(cmd, plan, spec.video, 0.0)
         cmd.map("0:a:0?")
-        applyAudioEncoding(cmd, spec.audio)
+        spec.audio?.let { applyAudioEncoding(cmd, it) }
         cmd.output(spec.output)
         return cmd.build()
     }
@@ -645,7 +645,7 @@ object Commands {
         // 音频用 atempo 变速但保持音调；它单次只支持 0.5~2.0，
         // 超出范围由 buildAtempoChain 自动串联。
         cmd.audioFilterGraph(listOf(buildAtempoChain(factor)))
-        applyAudioEncoding(cmd, spec.audio)
+        spec.audio?.let { applyAudioEncoding(cmd, it) }
         cmd.output(spec.output)
         return cmd.build()
     }
@@ -683,7 +683,7 @@ object Commands {
 
         applyVideoEncoding(cmd, plan, spec.video, 0.0)
         cmd.map("0:a:0?")
-        applyAudioEncoding(cmd, spec.audio)
+        spec.audio?.let { applyAudioEncoding(cmd, it) }
         cmd.output(spec.output)
         return cmd.build()
     }
