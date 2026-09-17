@@ -74,6 +74,16 @@ interface FfmpegBackend {
      */
     suspend fun probeJson(path: String): Result<String>
 
+    /**
+     * 列出当前 FFmpeg 构建**实际包含**的编码器名（如 `libx264`、`h264_mediacodec`）。
+     *
+     * 这是硬件加速规划的前提：设备支持 MediaCodec 不代表 FFmpeg 里编了这个编码器，
+     * AAR 构建时少一个 `--enable-lib-*`，生成的命令就会 "Encoder not found"。
+     *
+     * 默认返回空集，表示该后端不支持自省 —— 上层会退化成「不做可用性过滤」。
+     */
+    suspend fun listEncoders(): Set<String> = emptySet()
+
     /** 请求取消当前会话 */
     fun cancel()
 
