@@ -112,15 +112,34 @@ jobs:
           done
           echo "跳过的架构：${DISABLE[*]:-无}"
 
-          # --enable-gpl 是必须的：不开就没有 libx264/libx265，
-          # FFmpegX 的「兼容优先」（全软编码）策略会失效。
+          # 库清单必须与 scripts/build-ffmpeg-kit-next.sh 以及 App 声明的能力保持一致。
+          # 每一行都对应 App 里真实会生成的编码器参数，少一个就有功能在真机上失败：
+          #
+          #   --enable-gpl                        GPL 变体，x264/x265 的前提
+          #   --enable-lib-x264 / -x265           H.264 / HEVC 软件编码（「兼容优先」策略）
+          #   --enable-lib-android-media-codec    ★ MediaCodec 硬编硬解。
+          #       上游默认是 no！不开的话 h264_mediacodec / hevc_mediacodec 在
+          #       libavcodec 里根本不存在，而 App 会依据设备 MediaCodec 能力生成
+          #       `-c:v h264_mediacodec` —— 于是每个转码任务都秒退：
+          #       "Error opening output files: Encoder not found"
+          #   --enable-lib-lame                   MP3（libmp3lame）
+          #   --enable-lib-opus                   Opus（libopus）
+          #   --enable-lib-libvorbis              Vorbis（libvorbis）
+          #   --enable-lib-libvpx                 VP8/VP9（libvpx-vp9）
+          #   --enable-lib-libass                 字幕烧录（subtitles 滤镜）
           ./nix-android.sh \
             -p "${FFMPEG_KIT_NEXT_NIX_PROFILE}" \
             --api-level=24 \
             "${DISABLE[@]}" \
             --enable-gpl \
             --enable-lib-x264 \
-            --enable-lib-x265
+            --enable-lib-x265 \
+            --enable-lib-android-media-codec \
+            --enable-lib-lame \
+            --enable-lib-opus \
+            --enable-lib-libvorbis \
+            --enable-lib-libvpx \
+            --enable-lib-libass
 
           # 归拢到一个稳定路径，方便缓存与下游 job 引用
           mkdir -p "${GITHUB_WORKSPACE}/prebuilt"

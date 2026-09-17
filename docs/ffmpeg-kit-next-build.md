@@ -67,7 +67,13 @@ cd ffmpeg-kit-next
   --disable-arch-x86 \
   --enable-gpl \
   --enable-lib-x264 \
-  --enable-lib-x265
+  --enable-lib-x265 \
+  --enable-lib-android-media-codec \
+  --enable-lib-lame \
+  --enable-lib-opus \
+  --enable-lib-libvorbis \
+  --enable-lib-libvpx \
+  --enable-lib-libass
 ```
 
 产物：
@@ -81,15 +87,35 @@ ffmpeg-kit-next/prebuilt/bundle-android-aar-24-maven/
 
 ---
 
-## 4. 必须开 `--enable-gpl`
+## 4. 必须开启的库（漏一个就会有功能报错）
 
-这不是可选项，理由在代码里：
+构建参数不是「能跑就行」。**少开一个库，对应功能在真机上会直接失败**，
+而且构建过程**完全不会报错** —— ffmpeg-kit-next 对不认识的 `--enable-*` 选项
+是静默忽略的，CI 照样绿。
 
-- `core/hw/CodecModels.kt` 中 H264 的 `swName = "libx264"`，其余编码的 `swName` 为 null；
-- `hasSoftwareEncoder` 决定「兼容优先」策略下该编码是否可选；
-- 不开 GPL 就没有 libx264/libx265，**「兼容优先」（全软）会直接失效**。
+| 参数 | 少了会怎样 |
+|---|---|
+| `--enable-gpl` | 没有 libx264/libx265，「兼容优先」（全软编）策略失效 |
+| `--enable-lib-x264` / `--enable-lib-x265` | 同上，H.264 / HEVC 无法软件编码 |
+| **`--enable-lib-android-media-codec`** | **MediaCodec 硬编硬解全部不可用。** `h264_mediacodec` 等编码器在 libavcodec 里根本不存在，而 App 会依据设备 MediaCodec 能力生成 `-c:v h264_mediacodec` → 每个转码任务都秒失败：`Error opening output files: Encoder not found` |
+| `--enable-lib-lame` | MP3 导出失败（缺 `libmp3lame`） |
+| `--enable-lib-opus` | Opus 导出失败（缺 `libopus`） |
+| `--enable-lib-libvorbis` | Vorbis 导出失败（缺 `libvorbis`） |
+| `--enable-lib-libvpx` | VP8 / VP9 导出失败（缺 `libvpx`） |
+| `--enable-lib-libass` | 字幕烧录失败（缺 `subtitles` 滤镜） |
 
-许可证影响：开了 GPL 后整个 bundle 受 **GPL-3.0** 约束。
+> ⚠️ **`--enable-lib-android-media-codec` 在 ffmpeg-kit-next 里默认是关闭的。**
+> 这是最容易漏、后果最严重的一项：漏了它，App 的整个「硬件加速」卖点都形同虚设，
+> 而构建日志里不会有任何异常。
+>
+> 另外，CI 的 AAR 缓存 key **必须包含库清单指纹** —— 只改参数不改 key 会命中旧
+> AAR，新参数永远不生效。
+
+命名规律：选项统一是 `--enable-lib-<库名>`，而库名本身带 `lib` 的会出现双 `lib`
+（`--enable-lib-libvorbis`、`--enable-lib-libvpx`、`--enable-lib-libass`）。
+不存在 `--enable-x264` 这种写法。
+
+许可证影响：开了 `--enable-gpl` 后整个 bundle 受 **GPL-3.0** 约束。
 FFmpegX 本身已经是 GPL-3.0，所以**不需要改动 LICENSE**。
 
 ---
