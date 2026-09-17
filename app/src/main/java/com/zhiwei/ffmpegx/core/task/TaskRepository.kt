@@ -108,6 +108,26 @@ class TaskRepository @Inject constructor(
         }
     }
 
+    /**
+     * 释放一个 SAF url，但**只有在没有任何任务还引用它时**才真正注销。
+     *
+     * 工具页（ViewModel）也持有同一个 url —— 表单里还没入队的那份状态。
+     * 如果它绕过引用计数直接调 `FFmpegNative.releaseSafUrl`，就会把仍在排队/执行中的
+     * 任务的输入抽掉，任务随后必然报「找不到 SAF id」而失败。
+     * （用户只要「选好文件 → 开始 → 退出工具页」，onCleared 就会触发这种误释放。）
+     *
+     * 所以 ViewModel 侧必须走这里，由引用计数决定是否真的注销。
+     */
+    @Synchronized
+    fun releaseSafUrlIfUnused(url: String?) {
+        if (url.isNullOrBlank()) return
+        val ids = safUrlRefs[url]
+        if (ids.isNullOrEmpty()) {
+            runCatching { FFmpegNative.releaseSafUrl(url) }
+                .onFailure { Log.w(TAG, "释放 saf url 失败：$url") }
+        }
+    }
+
     /** 全量任务列表（新到旧） */
     val allTasks: StateFlow<List<TaskEntity>> = dao.observeAll()
         .stateIn(appScope, SharingStarted.Eagerly, emptyList())
