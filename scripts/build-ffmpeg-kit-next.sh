@@ -134,7 +134,10 @@ for arch in ${ALL_ARCHS}; do
   fi
 done
 
-# 默认库清单：**必须与 CI（.github/workflows/build.yml）保持一致**。
+# 默认库清单：**必须与 CI（.github/workflows/build.yml 的 FFMPEG_KIT_NEXT_LIBS）
+# 逐项一致**。CI 的 "Derive lib flags" 步骤会解析这里的 DEFAULT_LIBS 做断言，
+# 不一致直接 fail —— 因为「CI 编出的 AAR 和本地编出的不一样」极难排查。
+#
 # 每一项都对应 App 里真实会生成的编码器参数，少一个就会有功能在真机上
 # 直接报 "Error opening output files: Encoder not found"。
 #

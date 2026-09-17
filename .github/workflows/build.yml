@@ -85,6 +85,27 @@ jobs:
           echo "库指纹   = ${SLUG}"
           echo "构建开关 = ${FLAGS}"
 
+          # 库清单在 scripts/build-ffmpeg-kit-next.sh 里还有一份（README 与 docs
+          # 记载的本地手动构建入口，CI 不走它）。两份独立维护，就有悄悄漂移的风险 ——
+          # 而漂移的后果是「CI 编出的 AAR 和本地编出的不一样」，极难排查。
+          # 这里断言两者一致：不一致就立刻 fail，逼着改的人同步。
+          SCRIPT_DEFAULT="$(grep -m1 '^DEFAULT_LIBS="' scripts/build-ffmpeg-kit-next.sh \
+            | sed 's/^DEFAULT_LIBS="//; s/"$//')"
+          if [ -z "${SCRIPT_DEFAULT}" ]; then
+            echo "::error::读不到 scripts/build-ffmpeg-kit-next.sh 里的 DEFAULT_LIBS"
+            exit 1
+          fi
+          # 脚本在启用 GPL 时会前置 x264 x265，按同样规则拼出它的完整清单
+          EXPECTED_LIBS="$(echo "gpl x264 x265 ${SCRIPT_DEFAULT}" | tr ' ' '\n' | sort | tr '\n' ' ')"
+          ACTUAL_LIBS="$(echo "${LIBS}" | tr ' ' '\n' | sort | tr '\n' ' ')"
+          if [ "${EXPECTED_LIBS}" != "${ACTUAL_LIBS}" ]; then
+            echo "::error::库清单不一致：CI 的 FFMPEG_KIT_NEXT_LIBS 与 scripts/build-ffmpeg-kit-next.sh 的 DEFAULT_LIBS 必须同步"
+            echo "  CI   : ${ACTUAL_LIBS}"
+            echo "  脚本 : ${EXPECTED_LIBS}"
+            exit 1
+          fi
+          echo "库清单与本地构建脚本一致"
+
       - name: Cache AAR
         id: aar-cache
         uses: actions/cache@v4
