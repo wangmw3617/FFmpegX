@@ -20,7 +20,7 @@ git clone https://github.com/arthenica/ffmpeg-kit-next.git ../ffmpeg-kit-next
 ./scripts/build-ffmpeg-kit-next.sh
 ```
 
-脚本需要 **Linux / macOS / WSL2**（上游未提供可产出 Android 目标的 Windows 构建），默认产出 minSdk 24、`arm64-v8a` + `armeabi-v7a` + `x86_64` 三个架构、并启用 GPL 库的 AAR。产物落在 ffmpeg-kit-next 的 `prebuilt/` 下，FFmpegX 会自动从默认相对路径解析，也可用 `ffmpegx.ffmpegKitNextRepo` 指定。详见 [docs/ffmpeg-kit-next-build.md](docs/ffmpeg-kit-next-build.md)。
+脚本需要 **Linux / macOS / WSL2**（上游未提供可产出 Android 目标的 Windows 构建），默认产出 minSdk 24、`arm64-v8a` + `armeabi-v7a` + `x86_64` 三个架构的 AAR，并启用 GPL 库与 MediaCodec 硬编硬解等外部库。产物落在 ffmpeg-kit-next 的 `prebuilt/` 下，FFmpegX 会自动从默认相对路径解析，也可用 `ffmpegx.ffmpegKitNextRepo` 指定。详见 [docs/ffmpeg-kit-next-build.md](docs/ffmpeg-kit-next-build.md)。
 
 之后正常构建即可（需要 JDK 17+）：
 
