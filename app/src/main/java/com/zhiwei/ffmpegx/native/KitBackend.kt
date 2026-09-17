@@ -177,6 +177,51 @@ internal class KitBackend(
         }
     }
 
+    /**
+     * 跑一次 `ffmpeg -encoders`，问 FFmpeg 自己有哪些编码器。
+     *
+     * 不能靠 `FFmpegKitConfig` 的常量判断：那反映的是**构建时的预期**，
+     * 而这里要的是「这个 AAR 里实际存在什么」。两者不一致正是
+     * "Encoder not found" 的来源，所以只认实际跑出来的结果。
+     */
+    override suspend fun listEncoders(): Set<String> = withContext(Dispatchers.IO) {
+        if (!ensureLoaded()) return@withContext emptySet<String>()
+        runCatching {
+            val session = FFmpegKit.execute("-hide_banner -encoders")
+            parseEncoderTable(session.getOutput().orEmpty())
+        }.onFailure { Log.w(TAG, "执行 -encoders 失败", it) }
+            .getOrDefault(emptySet())
+    }
+
+    /**
+     * 解析 `ffmpeg -encoders` 的输出表。
+     *
+     * 表体每行形如（首列是 6 个标志字符，V/A/S 表示视频/音频/字幕）：
+     * ```
+     *  V....D libx264          libx264 H.264 / AVC / MPEG-4 AVC (codec h264)
+     *  V....D h264_mediacodec  h264_mediacodec (codec h264)
+     *  A....D aac              AAC (Advanced Audio Coding)
+     * ```
+     * 以 `------` 分隔线为界，之后的行才属于表体；第 2 列即编码器名。
+     */
+    private fun parseEncoderTable(text: String): Set<String> {
+        val result = mutableSetOf<String>()
+        var inTable = false
+        for (raw in text.lineSequence()) {
+            val line = raw.trim()
+            if (line.startsWith("------")) {
+                inTable = true
+                continue
+            }
+            if (!inTable || line.isEmpty()) continue
+            val parts = line.split(' ').filter { it.isNotEmpty() }
+            if (parts.size >= 2 && parts[0].length == 6) {
+                result += parts[1]
+            }
+        }
+        return result
+    }
+
     override fun cancel() {
         val session = activeSession
         runCatching {
