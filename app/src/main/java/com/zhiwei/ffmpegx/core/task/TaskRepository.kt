@@ -5,6 +5,7 @@ import android.util.Log
 import com.zhiwei.ffmpegx.core.engine.FFmpegEngine
 import com.zhiwei.ffmpegx.core.engine.TranscodeEvent
 import com.zhiwei.ffmpegx.core.engine.TranscodeProgress
+import com.zhiwei.ffmpegx.core.media.MediaFiles
 import com.zhiwei.ffmpegx.core.settings.SettingsRepository
 import com.zhiwei.ffmpegx.di.ApplicationScope
 import com.zhiwei.ffmpegx.native.FFmpegNative
@@ -418,12 +419,35 @@ class TaskRepository @Inject constructor(
         elapsedMs: Long,
         outputBytes: Long,
     ) {
+        // 成功后把结果导出到公共 Download/FFmpegX。
+        // ffmpeg 只能写应用私有目录（Android 10 起不允许按路径写公共存储），
+        // 所以在收尾这里复制一份出去，用户才能在文件管理器里看到。
+        // 导出成功就删掉私有副本，避免同一份文件占两倍空间。
+        var finalOutputPath = task.outputPath
+        if (status == TaskStatus.SUCCESS && task.outputPath.isNotBlank()) {
+            val src = File(task.outputPath)
+            val exported = MediaFiles.publishToMediaStore(
+                context = context,
+                source = src,
+                extension = src.extension.ifBlank { "mp4" },
+            )
+            if (exported != null) {
+                finalOutputPath = "Download/${MediaFiles.APP_FOLDER}/${src.name}"
+                runCatching { src.delete() }
+                Log.i(TAG, "任务 #${task.id} 已导出到 $finalOutputPath")
+            } else {
+                // 导出失败就保留私有副本，别把用户的产物弄丢
+                Log.w(TAG, "任务 #${task.id} 导出到 Download 失败，保留私有副本：${task.outputPath}")
+            }
+        }
+
         val finished = task.copy(
             status = status.name,
             exitCode = exitCode,
             errorMessage = message,
             elapsedMs = elapsedMs,
             outputBytes = outputBytes,
+            outputPath = finalOutputPath,
             progressPercent = if (status == TaskStatus.SUCCESS) 100 else _current.value?.progressPercent ?: 0,
             finishedAt = System.currentTimeMillis(),
         )
