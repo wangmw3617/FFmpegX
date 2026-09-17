@@ -111,6 +111,11 @@ jobs:
           path: /nix/store
           key: nix-${{ env.FFMPEG_KIT_NEXT_NIX_PROFILE }}-${{ runner.os }}
 
+      # 作者在 Windows 上开发，Git 无法记录可执行位，.sh 可能以 100644 入库，
+      # Linux runner 上执行会直接 Permission denied（exit 126）。这里显式补一次。
+      - name: Make scripts executable
+        run: chmod +x scripts/*.sh
+
       # 架构裁剪与外部库开关都由项目脚本处理，CI 不重复实现这套逻辑。
       - name: Build AAR
         if: steps.cache.outputs.cache-hit != 'true'
@@ -118,8 +123,12 @@ jobs:
           set -e
           git clone --depth 1 https://github.com/arthenica/ffmpeg-kit-next.git ../ffmpeg-kit-next
           ./scripts/build-ffmpeg-kit-next.sh --abis "${FFMPEGX_ABIS}"
+
+          # 目录名可能带上游的变体后缀，与脚本一样做一次兜底查找
+          MAVEN="$(find ../ffmpeg-kit-next/prebuilt -maxdepth 1 -type d -name 'bundle-android-aar-*-maven' | head -1)"
+          [ -n "${MAVEN}" ] || { echo "::error::未找到 Maven 产物目录"; exit 1; }
           mkdir -p prebuilt
-          cp -r ../ffmpeg-kit-next/prebuilt/bundle-android-aar-24-maven/. prebuilt/
+          cp -r "${MAVEN}/." prebuilt/
 
       # --enable 开关只是「请求」：ffmpeg-kit-next 对无法识别的选项静默忽略，
       # 因此构建成功并不能证明库真的编进去了。唯一可靠的信号是把产物拆开逐项核对。
