@@ -42,18 +42,21 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.zhiwei.ffmpegx.core.hw.DecoderPlan
 import com.zhiwei.ffmpegx.core.hw.EncoderPlan
 import com.zhiwei.ffmpegx.core.hw.HardwarePlan
+import com.zhiwei.ffmpegx.core.media.MediaFiles
 import com.zhiwei.ffmpegx.core.model.formatDuration
 import com.zhiwei.ffmpegx.core.model.formatSize
 import com.zhiwei.ffmpegx.core.task.TaskEntity
@@ -444,9 +447,21 @@ fun TaskRow(
     task: TaskEntity,
     modifier: Modifier = Modifier,
     onClick: (() -> Unit)? = null,
+    onOpen: (() -> Unit)? = null,
     onRetry: (() -> Unit)? = null,
     onDelete: (() -> Unit)? = null,
 ) {
+    val context = LocalContext.current
+    // 产物位置异步解析：导出成功后记录的是 content Uri，
+    // 那串 content://media/... 直接显示给用户毫无意义，转成 Download/FFmpegX/文件名。
+    val outputLabel by produceState(initialValue = "", task.outputPath) {
+        value = if (task.statusEnum == TaskStatus.SUCCESS && task.outputPath.isNotBlank()) {
+            MediaFiles.displayNameOf(context, task.outputPath)
+        } else {
+            ""
+        }
+    }
+
     val statusColor = when (task.statusEnum) {
         TaskStatus.SUCCESS -> MaterialTheme.colorScheme.secondary
         TaskStatus.FAILED -> MaterialTheme.colorScheme.error
@@ -510,6 +525,26 @@ fun TaskRow(
                 }
             }
 
+            if (outputLabel.isNotBlank()) {
+                Spacer(Modifier.height(6.dp))
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(
+                        Icons.Default.Check,
+                        null,
+                        Modifier.size(14.dp),
+                        tint = MaterialTheme.colorScheme.secondary,
+                    )
+                    Spacer(Modifier.width(6.dp))
+                    Text(
+                        outputLabel,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
+            }
+
             Spacer(Modifier.height(6.dp))
             HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
             Spacer(Modifier.height(6.dp))
@@ -527,6 +562,9 @@ fun TaskRow(
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.weight(1f),
                 )
+                if (onOpen != null && task.statusEnum == TaskStatus.SUCCESS) {
+                    TextButton(onClick = onOpen) { Text("打开") }
+                }
                 if (onRetry != null && task.isFinished) {
                     TextButton(onClick = onRetry) { Text("重跑") }
                 }

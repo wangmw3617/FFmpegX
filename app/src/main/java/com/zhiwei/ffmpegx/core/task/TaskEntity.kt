@@ -93,6 +93,14 @@ interface TaskDao {
     @Query("DELETE FROM ffmpeg_tasks WHERE id = :id")
     suspend fun deleteById(id: Long)
 
+    /** 已结束的任务。清理前先取出来，才能连带删掉它们的产物文件 */
+    @Query("SELECT * FROM ffmpeg_tasks WHERE status IN ('SUCCESS','FAILED','CANCELLED')")
+    suspend fun finishedTasks(): List<TaskEntity>
+
+    /** 全量任务快照，用途同上 */
+    @Query("SELECT * FROM ffmpeg_tasks")
+    suspend fun allTasksOnce(): List<TaskEntity>
+
     @Query("DELETE FROM ffmpeg_tasks WHERE status IN ('SUCCESS','FAILED','CANCELLED')")
     suspend fun clearFinished()
 

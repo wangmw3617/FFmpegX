@@ -1,5 +1,6 @@
 package com.zhiwei.ffmpegx.ui.screen
 
+import android.widget.Toast
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -26,9 +27,11 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.zhiwei.ffmpegx.core.media.MediaFiles
 import com.zhiwei.ffmpegx.core.task.TaskStatus
 import com.zhiwei.ffmpegx.ui.components.ChoiceChips
 import com.zhiwei.ffmpegx.ui.components.EmptyState
@@ -44,6 +47,7 @@ private enum class QueueFilter(val label: String) {
 
 @Composable
 fun QueueScreen(viewModel: TasksViewModel = hiltViewModel()) {
+    val context = LocalContext.current
     val tasks by viewModel.allTasks.collectAsStateWithLifecycle()
     val current by viewModel.current.collectAsStateWithLifecycle()
     val progress by viewModel.progress.collectAsStateWithLifecycle()
@@ -114,6 +118,15 @@ fun QueueScreen(viewModel: TasksViewModel = hiltViewModel()) {
                 items(filtered, key = { it.id }) { task ->
                     TaskRow(
                         task = task,
+                        onOpen = {
+                            if (!MediaFiles.openOutput(context, task.outputPath)) {
+                                Toast.makeText(
+                                    context,
+                                    "没有能打开该文件的应用",
+                                    Toast.LENGTH_SHORT,
+                                ).show()
+                            }
+                        },
                         onRetry = { viewModel.retry(task.id) },
                         onDelete = { viewModel.remove(task.id) },
                     )

@@ -260,9 +260,10 @@ class TaskRepository @Inject constructor(
 
     suspend fun remove(id: Long) {
         val task = dao.findById(id)
-        // 删除记录时顺手清掉产物，避免输出目录越堆越多
+        // 删除记录时一并删掉产物。产物可能是媒体库里的 content Uri，
+        // 也可能是应用私有目录里的兜底副本，交给 MediaFiles 按前缀分流。
         if (task != null && task.outputPath.isNotBlank()) {
-            runCatching { File(task.outputPath).takeIf { it.exists() }?.delete() }
+            MediaFiles.deleteOutput(context, task.outputPath)
         }
         // 已删掉的任务不会再执行，它占用的 SAF url 立刻归还，否则要等进程退出才释放
         releaseSafUrls(id)
@@ -270,6 +271,12 @@ class TaskRepository @Inject constructor(
     }
 
     suspend fun clearFinished() {
+        // 先取出产物位置再删记录 —— 记录一删，这些文件就再也定位不到了
+        runCatching { dao.finishedTasks() }.getOrDefault(emptyList()).forEach { task ->
+            if (task.outputPath.isNotBlank()) {
+                MediaFiles.deleteOutput(context, task.outputPath)
+            }
+        }
         dao.clearFinished()
         // 正常情况下已完成任务的 SAF url 在 execute 的 finally 里已经归还，
         // 注册表里不该再有它们的引用。这里只做一次兜底清理：
@@ -294,6 +301,10 @@ class TaskRepository @Inject constructor(
 
     suspend fun clearAll() {
         val runningId = _current.value?.id
+        // 先删产物再删记录。正在跑的那条要跳过 —— 它的输出文件还在写。
+        runCatching { dao.allTasksOnce() }.getOrDefault(emptyList())
+            .filter { it.id != runningId && it.outputPath.isNotBlank() }
+            .forEach { task -> MediaFiles.deleteOutput(context, task.outputPath) }
         dao.clearAll()
         // 已结束任务的 url 全部归还。当前正在执行的那条要留着 ——
         // 它的命令还在跑，把输入 url 抽掉会让它立刻失败。
@@ -432,9 +443,15 @@ class TaskRepository @Inject constructor(
                 extension = src.extension.ifBlank { "mp4" },
             )
             if (exported != null) {
-                finalOutputPath = "Download/${MediaFiles.APP_FOLDER}/${src.name}"
+                // 记录**真实的 content Uri**，而不是 "Download/FFmpegX/x.mp4" 这种相对路径：
+                // 前者既能直接交给系统播放器打开，也能在删除任务时精确删掉媒体库里那一份。
+                // 展示名由 MediaFiles.displayNameOf() 还原成用户看得懂的形式。
+                finalOutputPath = exported.toString()
                 runCatching { src.delete() }
-                Log.i(TAG, "任务 #${task.id} 已导出到 $finalOutputPath")
+                Log.i(
+                    TAG,
+                    "任务 #${task.id} 已导出到 Download/${MediaFiles.APP_FOLDER}/${src.name}",
+                )
             } else {
                 // 导出失败就保留私有副本，别把用户的产物弄丢
                 Log.w(TAG, "任务 #${task.id} 导出到 Download 失败，保留私有副本：${task.outputPath}")
