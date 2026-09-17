@@ -789,13 +789,21 @@ class ToolViewModel @Inject constructor(
                     outputFile.parentFile,
                     outputFile.nameWithoutExtension + "." + form.frameFormat,
                 )
+                // 时间点是自由输入，超出素材时长时 -ss 取不到任何帧，
+                // FFmpeg 会以「输出为空」失败。这里收进时长内，最多退到结束前 1 秒。
+                val durationUs = form.mediaInfo?.durationUs ?: 0L
+                val atUs = if (durationUs > 0) {
+                    form.frameAtUs.coerceIn(0L, maxOf(0L, durationUs - 1_000_000L))
+                } else {
+                    form.frameAtUs.coerceAtLeast(0L)
+                }
                 listOf(
                     Commands.thumbnail(
                         settings = settings,
                         inputPath = form.inputPath,
                         spec = ThumbnailSpec(
                             output = frameOut.absolutePath,
-                            atUs = form.frameAtUs,
+                            atUs = atUs,
                             width = form.frameWidth,
                             format = form.frameFormat,
                             quality = form.frameQuality,

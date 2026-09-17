@@ -615,7 +615,10 @@ object Commands {
         // 至少留 2px —— 尺寸为 0 时 crop 会直接失败。
         val w = ((spec.width / 2) * 2).coerceAtLeast(2)
         val h = ((spec.height / 2) * 2).coerceAtLeast(2)
-        cmd.filterGraph(listOf("crop=$w:$h:${spec.x}:${spec.y}"))
+        // 起点为负会直接被 crop 拒绝
+        val x = spec.x.coerceAtLeast(0)
+        val y = spec.y.coerceAtLeast(0)
+        cmd.filterGraph(listOf("crop=$w:$h:$x:$y"))
 
         cmd.map("0:v:0?")
         // crop 是功能本体，滤镜去不掉，所以这里必须重编码
@@ -695,11 +698,14 @@ object Commands {
                 // 模糊：20 的半径足够糊掉文字，power=3 让边缘更柔和
                 "boxblur=20:3"
             }
+            // 起点为负会直接被 crop 拒绝
+            val rx = spec.x.coerceAtLeast(0)
+            val ry = spec.y.coerceAtLeast(0)
             cmd.raw(
                 "-filter_complex",
                 "[0:v]split=2[base][src];" +
-                    "[src]crop=$w:$h:${spec.x}:${spec.y},$regionFilter[m];" +
-                    "[base][m]overlay=${spec.x}:${spec.y}[v]",
+                    "[src]crop=$w:$h:$rx:$ry,$regionFilter[m];" +
+                    "[base][m]overlay=$rx:$ry[v]",
             )
             cmd.raw("-map", "[v]")
         }
@@ -722,6 +728,8 @@ object Commands {
 
         val cmd = base(settings)
         val fps = spec.fps.coerceIn(1, 60)
+        // 停留时长是自由输入，0 或负数会让 -t 直接失败（输出为空）
+        val seconds = spec.secondsEach.coerceIn(0.1, 3600.0)
 
         // 每张图先用 -loop 1 生成一段固定时长的视频流，再用 concat 滤镜串联。
         // 必须先统一尺寸：concat 遇到分辨率不一致会直接报错。
@@ -731,7 +739,7 @@ object Commands {
                 listOf(
                     "-loop", "1",
                     "-framerate", fps.toString(),
-                    "-t", formatDouble(spec.secondsEach),
+                    "-t", formatDouble(seconds),
                 ),
             )
         }
