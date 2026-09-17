@@ -232,6 +232,43 @@ jobs:
           fi
           echo "全部关键编码器就位"
 
+          # 滤镜同样要硬校验，理由和编码器一致：构建脚本对不认识的选项是
+          # 静默忽略的，而滤镜缺失的表现是运行时报 "No such filter"。
+          # 清单要与 Commands.kt 里真实生成的滤镜对应，改那边就要改这里。
+          #
+          # 匹配方式：.so 的字符串表里滤镜名是 NUL 结尾的，所以先把 NUL 换成
+          # 换行，再用 grep -qxF 做整行精确匹配 —— 直接 grep 子串会误判
+          # （例如 "split" 会命中 "splitxyz"）。
+          echo "--- 校验关键滤镜（缺失即 fail）---"
+          FILTER_SO="$(unzip -l "${AAR}" | awk '/libavfilter\.so/ { print $4 }' | head -1)"
+          if [ -z "${FILTER_SO}" ]; then
+            echo "::error::AAR 里找不到 libavfilter.so"
+            exit 1
+          fi
+          unzip -p "${AAR}" "${FILTER_SO}" > /tmp/libavfilter.so
+          ls -lh /tmp/libavfilter.so
+          tr '\0' '\n' < /tmp/libavfilter.so > /tmp/filter-names.txt
+
+          MISSING_FILTER=0
+          for flt in scale setsar fps format hwdownload hwupload \
+                     crop transpose hflip vflip \
+                     delogo boxblur pixelize overlay split \
+                     setpts atempo volume afade loudnorm \
+                     palettegen paletteuse concat hstack vstack \
+                     subtitles pad drawtext trim select; do
+            if grep -qxF "${flt}" /tmp/filter-names.txt; then
+              echo "  [OK]   ${flt}"
+            else
+              echo "::error::libavfilter.so 缺少滤镜 ${flt} —— 对应功能会报 No such filter"
+              MISSING_FILTER=1
+            fi
+          done
+          if [ "${MISSING_FILTER}" -ne 0 ]; then
+            echo "::error::AAR 缺少必需滤镜，拒绝继续"
+            exit 1
+          fi
+          echo "全部关键滤镜就位"
+
       - name: Upload AAR repository
         uses: actions/upload-artifact@v4
         with:

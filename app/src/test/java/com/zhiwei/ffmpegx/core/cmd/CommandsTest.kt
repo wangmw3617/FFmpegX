@@ -8,6 +8,7 @@ import com.zhiwei.ffmpegx.core.model.OutputContainer
 import com.zhiwei.ffmpegx.valueOf
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -664,6 +665,331 @@ class CommandsTest {
         val expected = Commands.plannedFilters(output).joinToString(",")
         val args = Commands.render(settings, plan, listOf(InputSpec("/in.mp4")), output)
         assertEquals(expected, args.valueOf("-vf"))
+    }
+
+    // ============================================================ 旋转 / 翻转 ====
+
+    private fun rotateArgs(
+        degrees: Int = 90,
+        flipH: Boolean = false,
+        flipV: Boolean = false,
+        videoMode: RateMode = RateMode.CRF,
+        audio: AudioEncodeSpec? = AudioEncodeSpec(AudioCodec.AAC, 128_000),
+    ) = Commands.rotate(
+        settings = settings,
+        plan = plan,
+        inputPath = "/in.mp4",
+        spec = RotateSpec(
+            output = "/out.mp4",
+            degrees = degrees,
+            flipHorizontal = flipH,
+            flipVertical = flipV,
+            video = VideoEncodeSpec(VideoCodec.H264, videoMode),
+            audio = audio,
+        ),
+    )
+
+    @Test
+    fun `顺时针 90 度用 transpose 1`() {
+        assertEquals("transpose=1", rotateArgs(degrees = 90).valueOf("-vf"))
+    }
+
+    @Test
+    fun `180 度串联两次 transpose 2`() {
+        // transpose 只认 0/1/2/3，180° 没有单值可表达，只能两次 90°
+        assertEquals("transpose=2,transpose=2", rotateArgs(degrees = 180).valueOf("-vf"))
+    }
+
+    @Test
+    fun `顺时针 270 度等价于逆时针 90 度`() {
+        assertEquals("transpose=2", rotateArgs(degrees = 270).valueOf("-vf"))
+    }
+
+    @Test
+    fun `角度为 0 且不翻转时不生成 vf`() {
+        assertFalse("没有滤镜就不该生成 -vf", rotateArgs(degrees = 0).contains("-vf"))
+    }
+
+    @Test
+    fun `旋转与翻转叠加时顺序稳定`() {
+        assertEquals(
+            "transpose=1,hflip,vflip",
+            rotateArgs(degrees = 90, flipH = true, flipV = true).valueOf("-vf"),
+        )
+    }
+
+    @Test
+    fun `旋转带滤镜时 copy 会被强制改成重编码`() {
+        // -vf 与 -c:v copy 互斥，FFmpeg 直接报
+        // "Filtering and streamcopy cannot be used together"
+        val args = rotateArgs(degrees = 90, videoMode = RateMode.COPY)
+        assertTrue(args.containsSequence("-c:v", "libx264"))
+        assertFalse(args.containsSequence("-c:v", "copy"))
+    }
+
+    @Test
+    fun `角度为 0 的旋转仍然允许直通`() {
+        // 没有滤镜就没有冲突，此时 copy 应该保留 —— 降级只在真的需要时发生
+        val args = rotateArgs(degrees = 0, videoMode = RateMode.COPY)
+        assertTrue(args.containsSequence("-c:v", "copy"))
+    }
+
+    // ================================================================ 画面裁剪 ====
+
+    private fun cropArgs(w: Int, h: Int, x: Int = 0, y: Int = 0) = Commands.crop(
+        settings = settings,
+        plan = plan,
+        inputPath = "/in.mp4",
+        spec = CropSpec(
+            output = "/out.mp4",
+            x = x,
+            y = y,
+            width = w,
+            height = h,
+            video = VideoEncodeSpec(VideoCodec.H264, RateMode.CRF),
+            audio = AudioEncodeSpec(AudioCodec.AAC, 128_000),
+        ),
+    )
+
+    @Test
+    fun `裁剪宽高会取偶数`() {
+        // yuv420p 的色度是 2×2 采样，奇数尺寸会错位甚至直接报错
+        assertEquals("crop=100:50:10:20", cropArgs(w = 101, h = 51, x = 10, y = 20).valueOf("-vf"))
+    }
+
+    @Test
+    fun `裁剪尺寸至少留 2px`() {
+        // 尺寸为 0 时 crop 会因「必须为正」直接失败
+        assertEquals("crop=2:2:0:0", cropArgs(w = 1, h = 0).valueOf("-vf"))
+    }
+
+    @Test
+    fun `裁剪带滤镜时 copy 会被强制改成重编码`() {
+        val args = Commands.crop(
+            settings = settings,
+            plan = plan,
+            inputPath = "/in.mp4",
+            spec = CropSpec(
+                output = "/out.mp4", x = 0, y = 0, width = 100, height = 100,
+                video = VideoEncodeSpec(VideoCodec.H264, RateMode.COPY),
+                audio = AudioEncodeSpec(AudioCodec.AAC, 128_000),
+            ),
+        )
+        assertTrue(args.containsSequence("-c:v", "libx264"))
+        assertFalse(args.containsSequence("-c:v", "copy"))
+    }
+
+    // ================================================================ 提取画面 ====
+
+    private fun thumbnailArgs(format: String = "jpg", width: Int = 0) = Commands.thumbnail(
+        settings = settings,
+        inputPath = "/in.mp4",
+        spec = ThumbnailSpec(
+            output = "/out.$format",
+            atUs = 1_500_000,
+            width = width,
+            format = format,
+            quality = 3,
+        ),
+    )
+
+    @Test
+    fun `缩略图定位在输入之前且只取一帧`() {
+        // -ss 放在 -i 之前才是快速定位（否则要解码到该时间点）
+        val args = thumbnailArgs()
+        assertTrue(args.containsSequence("-ss", "00:00:01.500", "-i", "/in.mp4"))
+        assertTrue(args.containsSequence("-frames:v", "1"))
+    }
+
+    @Test
+    fun `缩略图指定宽度时走 lanczos 缩放`() {
+        assertEquals("scale=640:-1:flags=lanczos", thumbnailArgs(width = 640).valueOf("-vf"))
+    }
+
+    @Test
+    fun `jpg 缩略图生成 q v 与 image2 封装`() {
+        val args = thumbnailArgs(format = "jpg")
+        assertTrue(args.containsSequence("-q:v", "3"))
+        assertTrue(args.containsSequence("-f", "image2"))
+    }
+
+    @Test
+    fun `png 缩略图不生成 q v`() {
+        // -q:v 是 JPEG 的量表，对 png 没有意义
+        val args = thumbnailArgs(format = "png")
+        assertFalse(args.contains("-q:v"))
+        assertTrue(args.containsSequence("-f", "png"))
+    }
+
+    // ================================================================ 视频变速 ====
+
+    private fun speedArgs(
+        factor: Double,
+        videoMode: RateMode = RateMode.CRF,
+        audio: AudioEncodeSpec? = AudioEncodeSpec(AudioCodec.AAC, 128_000),
+    ) = Commands.speed(
+        settings = settings,
+        plan = plan,
+        inputPath = "/in.mp4",
+        spec = SpeedSpec(
+            output = "/out.mp4",
+            factor = factor,
+            video = VideoEncodeSpec(VideoCodec.H264, videoMode),
+            audio = audio,
+        ),
+    )
+
+    @Test
+    fun `二倍速用 setpts 减半并配 atempo 二倍`() {
+        val args = speedArgs(2.0)
+        assertEquals("setpts=0.5*PTS", args.valueOf("-vf"))
+        assertEquals("atempo=2", args.valueOf("-af"))
+    }
+
+    @Test
+    fun `减速用大于一的 setpts 系数`() {
+        assertEquals("setpts=2*PTS", speedArgs(0.5).valueOf("-vf"))
+    }
+
+    @Test
+    fun `变速时视频 copy 会被强制改成重编码`() {
+        val args = speedArgs(2.0, videoMode = RateMode.COPY)
+        assertTrue(args.containsSequence("-c:v", "libx264"))
+        assertFalse(args.containsSequence("-c:v", "copy"))
+    }
+
+    @Test
+    fun `变速时音频 copy 会被强制改成重编码`() {
+        // 有 -af 就不能 -c:a copy，否则 FFmpeg 报
+        // "Filtering and streamcopy cannot be used together"
+        val args = speedArgs(2.0, audio = AudioEncodeSpec(AudioCodec.COPY, 0))
+        assertFalse(args.containsSequence("-c:a", "copy"))
+        assertTrue(args.containsSequence("-c:a", "aac"))
+    }
+
+    // ============================================================ 去水印 / 遮挡 ====
+
+    private fun delogoArgs(
+        mode: String,
+        w: Int = 101,
+        h: Int = 51,
+        x: Int = 10,
+        y: Int = 20,
+    ) = Commands.delogo(
+        settings = settings,
+        plan = plan,
+        inputPath = "/in.mp4",
+        spec = DelogoSpec(
+            output = "/out.mp4",
+            x = x,
+            y = y,
+            width = w,
+            height = h,
+            mode = mode,
+            video = VideoEncodeSpec(VideoCodec.H264, RateMode.CRF),
+            audio = AudioEncodeSpec(AudioCodec.AAC, 128_000),
+        ),
+    )
+
+    @Test
+    fun `智能填补用 delogo 滤镜且不走 filter_complex`() {
+        val args = delogoArgs(mode = "delogo")
+        assertEquals("delogo=x=10:y=20:w=100:h=50", args.valueOf("-vf"))
+        assertFalse("单路滤镜不该生成 filter_complex", args.contains("-filter_complex"))
+        assertTrue(args.containsSequence("-map", "0:v:0?"))
+    }
+
+    @Test
+    fun `模糊模式把区域抠出来模糊再盖回并带 v 标签`() {
+        // 三个要点：显式 split、输出打 [v] 标签、用 boxblur
+        val args = delogoArgs(mode = "blur")
+        val graph = args.valueOf("-filter_complex")
+        assertEquals(
+            "[0:v]split=2[base][src];[src]crop=100:50:10:20,boxblur=20:3[m];[base][m]overlay=10:20[v]",
+            graph,
+        )
+        assertTrue("filter_complex 的输出必须打 [v] 标签，否则 -map 找不到", args.containsSequence("-map", "[v]"))
+    }
+
+    @Test
+    fun `马赛克模式用 pixelize 而不是 boxblur`() {
+        // 「马赛克」的语义是块状像素化，用 boxblur 只是模糊
+        val args = delogoArgs(mode = "mosaic")
+        val graph = args.valueOf("-filter_complex")
+        assertTrue("马赛克应当用 pixelize", graph!!.contains("pixelize=w=16:h=16"))
+        assertFalse("马赛克不该退化成模糊", graph.contains("boxblur"))
+        assertTrue(args.containsSequence("-map", "[v]"))
+    }
+
+    @Test
+    fun `模糊与马赛克生成的是两种不同处理`() {
+        assertNotEquals(delogoArgs(mode = "blur").valueOf("-filter_complex"), delogoArgs(mode = "mosaic").valueOf("-filter_complex"))
+    }
+
+    @Test
+    fun `去遮挡带滤镜时 copy 会被强制改成重编码`() {
+        val args = Commands.delogo(
+            settings = settings,
+            plan = plan,
+            inputPath = "/in.mp4",
+            spec = DelogoSpec(
+                output = "/out.mp4", x = 10, y = 20, width = 100, height = 50, mode = "blur",
+                video = VideoEncodeSpec(VideoCodec.H264, RateMode.COPY),
+                audio = AudioEncodeSpec(AudioCodec.AAC, 128_000),
+            ),
+        )
+        assertTrue(args.containsSequence("-c:v", "libx264"))
+        assertFalse(args.containsSequence("-c:v", "copy"))
+    }
+
+    // ============================================================ 图片转视频 ====
+
+    private fun slideshowArgs(images: List<String>, secondsEach: Double = 3.0, fps: Int = 30) =
+        Commands.slideshow(
+            settings = settings,
+            plan = plan,
+            spec = SlideshowSpec(
+                output = "/out.mp4",
+                inputs = images,
+                secondsEach = secondsEach,
+                fps = fps,
+                video = VideoEncodeSpec(VideoCodec.H264, RateMode.CRF),
+            ),
+        )
+
+    @Test
+    fun `每张图片带 loop 帧率与停留时长`() {
+        val args = slideshowArgs(listOf("/a.jpg", "/b.jpg"))
+        assertTrue(args.containsSequence("-loop", "1", "-framerate", "30", "-t", "3", "-i", "/a.jpg"))
+        assertTrue(args.containsSequence("-loop", "1", "-framerate", "30", "-t", "3", "-i", "/b.jpg"))
+    }
+
+    @Test
+    fun `图片转视频统一尺寸后再 concat`() {
+        // concat 遇到分辨率不一致会直接报错，所以每路都要先 scale+pad 到同一尺寸
+        val graph = slideshowArgs(listOf("/a.jpg", "/b.jpg")).valueOf("-filter_complex")
+        assertTrue(graph!!.contains("[0:v]scale=1920:1080"))
+        assertTrue(graph.contains("[1:v]scale=1920:1080"))
+        assertTrue(graph.contains("setsar=1[v0]"))
+        assertTrue(graph.contains("setsar=1[v1]"))
+        assertTrue(graph.contains("[v0][v1] concat=n=2:v=1:a=0[v]"))
+    }
+
+    @Test
+    fun `图片转视频映射到 concat 的输出标签`() {
+        val args = slideshowArgs(listOf("/a.jpg"))
+        assertTrue(args.containsSequence("-map", "[v]"))
+    }
+
+    // ================================================================ 音频轨 ====
+
+    @Test
+    fun `audio 为 null 时丢弃音频轨而不是留下未指定的编码`() {
+        // 约定与 render 一致：null 表示丢弃。早先无条件 -map 0:a:0?，
+        // 于是「丢弃音频」开关点了等于没点
+        val args = rotateArgs(degrees = 90, audio = null)
+        assertTrue(args.contains("-an"))
+        assertFalse(args.containsSequence("-map", "0:a:0?"))
     }
 
     // -------------------------------------------------------------- 辅助 ----

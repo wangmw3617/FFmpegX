@@ -593,9 +593,9 @@ object Commands {
         cmd.filterGraph(filters)
 
         cmd.map("0:v:0?")
-        applyVideoEncoding(cmd, plan, spec.video, 0.0)
-        cmd.map("0:a:0?")
-        spec.audio?.let { applyAudioEncoding(cmd, it) }
+        // 角度为 0 且不翻转时 filters 为空，此时直通仍然合法；有滤镜才降级
+        applyVideoEncoding(cmd, plan, if (filters.isEmpty()) spec.video else spec.video.reencodedIfFiltered(), 0.0)
+        applyAudioTrack(cmd, spec.audio)
         cmd.output(spec.output)
         return cmd.build()
     }
@@ -611,15 +611,16 @@ object Commands {
         val cmd = base(settings)
         cmd.input(inputPath, plan.inputArgs)
 
-        // 宽高各取偶数：yuv420p 的色度是 2×2 采样，奇数尺寸会导致错位或直接报错
-        val w = (spec.width / 2) * 2
-        val h = (spec.height / 2) * 2
+        // 宽高各取偶数：yuv420p 的色度是 2×2 采样，奇数尺寸会导致错位或直接报错。
+        // 至少留 2px —— 尺寸为 0 时 crop 会直接失败。
+        val w = ((spec.width / 2) * 2).coerceAtLeast(2)
+        val h = ((spec.height / 2) * 2).coerceAtLeast(2)
         cmd.filterGraph(listOf("crop=$w:$h:${spec.x}:${spec.y}"))
 
         cmd.map("0:v:0?")
-        applyVideoEncoding(cmd, plan, spec.video, 0.0)
-        cmd.map("0:a:0?")
-        spec.audio?.let { applyAudioEncoding(cmd, it) }
+        // crop 是功能本体，滤镜去不掉，所以这里必须重编码
+        applyVideoEncoding(cmd, plan, spec.video.reencodedIfFiltered(), 0.0)
+        applyAudioTrack(cmd, spec.audio)
         cmd.output(spec.output)
         return cmd.build()
     }
@@ -640,12 +641,15 @@ object Commands {
         cmd.filterGraph(listOf("setpts=${formatDouble(1.0 / factor)}*PTS"))
 
         cmd.map("0:v:0?")
-        applyVideoEncoding(cmd, plan, spec.video, 0.0)
-        cmd.map("0:a:0?")
+        // setpts 是功能本体，去不掉 → 不能 -c:v copy
+        applyVideoEncoding(cmd, plan, spec.video.reencodedIfFiltered(), 0.0)
+
         // 音频用 atempo 变速但保持音调；它单次只支持 0.5~2.0，
         // 超出范围由 buildAtempoChain 自动串联。
-        cmd.audioFilterGraph(listOf(buildAtempoChain(factor)))
-        spec.audio?.let { applyAudioEncoding(cmd, it) }
+        // 注意 keepPitch 为 false 时这里仍然走 atempo —— 变调需要 asetrate，
+        // 会连带改变采样率，暂不支持，所以参数只作展示用。
+        applyAudioTrack(cmd, spec.audio, listOf(buildAtempoChain(factor)))
+
         cmd.output(spec.output)
         return cmd.build()
     }
@@ -661,29 +665,48 @@ object Commands {
         val cmd = base(settings)
         cmd.input(inputPath, plan.inputArgs)
 
-        val w = (spec.width / 2) * 2
-        val h = (spec.height / 2) * 2
+        // 宽高各取偶数：yuv420p 的色度是 2×2 采样
+        val w = ((spec.width / 2) * 2).coerceAtLeast(2)
+        val h = ((spec.height / 2) * 2).coerceAtLeast(2)
 
-        if (spec.mode == "mosaic") {
-            // 马赛克：把该区域单独抠出来做强模糊，再盖回原位置。
-            // 需要 filter_complex，因此不走 -vf。
-            cmd.raw(
-                "-filter_complex",
-                "[0:v]crop=$w:$h:${spec.x}:${spec.y},boxblur=20:3[m];" +
-                    "[0:v][m]overlay=${spec.x}:${spec.y}",
-            )
-            cmd.raw("-map", "[v]")
-        } else {
+        if (spec.mode == "delogo") {
             // delogo 用周边像素插值填补，区域必须完全落在画面内部，所以至少离边 1px
             val x = spec.x.coerceAtLeast(1)
             val y = spec.y.coerceAtLeast(1)
             cmd.filterGraph(listOf("delogo=x=$x:y=$y:w=$w:h=$h"))
             cmd.map("0:v:0?")
+        } else {
+            // 「模糊」与「马赛克」都是「把该区域抠出来处理，再盖回原位置」，
+            // 有两路输入，-vf 表达不了，必须走 filter_complex。
+            //
+            // 三点都是踩过的坑：
+            //   1. 输出**必须**打 [v] 标签 —— -map "[v]" 找不到标签会直接报
+            //      「matches no streams」，整个模式不可用；
+            //   2. 同一个 [0:v] 被两路消费，要显式 split，
+            //      否则输入流被重复引用；
+            //   3. 模糊与马赛克是两种不同处理，不能共用 boxblur ——
+            //      早先两者都走 boxblur，于是「马赛克」实际是模糊，
+            //      而「模糊」掉进了 delogo 分支，跟「智能填补」完全一样。
+            val regionFilter = if (spec.mode == "mosaic") {
+                // pixelize 才是块状像素化。块比区域还大时它会失败，按区域尺寸收一下
+                val block = minOf(16, maxOf(2, minOf(w, h) / 2))
+                "pixelize=w=$block:h=$block"
+            } else {
+                // 模糊：20 的半径足够糊掉文字，power=3 让边缘更柔和
+                "boxblur=20:3"
+            }
+            cmd.raw(
+                "-filter_complex",
+                "[0:v]split=2[base][src];" +
+                    "[src]crop=$w:$h:${spec.x}:${spec.y},$regionFilter[m];" +
+                    "[base][m]overlay=${spec.x}:${spec.y}[v]",
+            )
+            cmd.raw("-map", "[v]")
         }
 
-        applyVideoEncoding(cmd, plan, spec.video, 0.0)
-        cmd.map("0:a:0?")
-        spec.audio?.let { applyAudioEncoding(cmd, it) }
+        // 去遮挡的滤镜去不掉，所以这里必须重编码
+        applyVideoEncoding(cmd, plan, spec.video.reencodedIfFiltered(), 0.0)
+        applyAudioTrack(cmd, spec.audio)
         cmd.output(spec.output)
         return cmd.build()
     }
@@ -730,6 +753,21 @@ object Commands {
     }
 
     // ============================================================ 内部：编码参数 ====
+
+    /**
+     * 有滤镜时不能直通。
+     *
+     * FFmpeg 对「既有 `-vf`/`-filter_complex` 又 `-c:v copy`」会直接报
+     * `Filtering and streamcopy cannot be used together`。
+     * 旋转 / 裁剪 / 变速 / 去遮挡这几项，滤镜就是功能本体，去不掉，
+     * 所以只能把「直通」降级成重编码。
+     */
+    private fun VideoEncodeSpec.reencodedIfFiltered(): VideoEncodeSpec =
+        if (mode == RateMode.COPY) copy(mode = RateMode.CRF) else this
+
+    /** 同上：`-af` 与 `-c:a copy` 互斥。 */
+    private fun AudioEncodeSpec.reencodedIfFiltered(): AudioEncodeSpec =
+        if (codec == AudioCodec.COPY) copy(codec = AudioCodec.AAC) else this
 
     private fun applyVideoEncoding(
         cmd: FfmpegCommand,
@@ -796,6 +834,34 @@ object Commands {
         }
         if (audio.sampleRate > 0) cmd.raw("-ar", audio.sampleRate.toString())
         if (audio.channels > 0) cmd.raw("-ac", audio.channels.toString())
+    }
+
+    /**
+     * 音频轨的「映射 + 滤镜 + 编码」三件事。
+     *
+     * 约定与 [render] 保持一致：`audio` 为 null 表示**丢弃**音频轨，
+     * 而不是「不指定编码参数」。早先的写法无条件 `-map 0:a:0?`，
+     * 于是「丢弃音频」开关点了等于没点 —— 音频照样被带进输出。
+     *
+     * @param audioFilters 非空时会写 `-af`，此时 `-c:a copy` 必须降级成重编码
+     *        （FFmpeg 报 `Filtering and streamcopy cannot be used together`）
+     */
+    private fun applyAudioTrack(
+        cmd: FfmpegCommand,
+        audio: AudioEncodeSpec?,
+        audioFilters: List<String> = emptyList(),
+    ) {
+        if (audio == null) {
+            cmd.flag("-an")
+            return
+        }
+        cmd.map("0:a:0?")
+        if (audioFilters.isEmpty()) {
+            applyAudioEncoding(cmd, audio)
+        } else {
+            cmd.audioFilterGraph(audioFilters)
+            applyAudioEncoding(cmd, audio.reencodedIfFiltered())
+        }
     }
 
     private fun applyContainer(cmd: FfmpegCommand, output: OutputSpec) {
