@@ -650,6 +650,325 @@ fun OverlayScreen(vm: ToolViewModel = hiltViewModel()) {
     }
 }
 
+// ============================================================ 旋转 / 翻转 ====
+
+@Composable
+fun RotateScreen(vm: ToolViewModel = hiltViewModel()) {
+    val state by vm.state.collectAsStateWithLifecycle()
+    val form = state.form
+    val pick = rememberFilePicker(arrayOf("video/*")) { vm.onPickInput(it) }
+
+    ToolScaffold(feature = TaskFeature.ROTATE, vm = vm) { f ->
+        InputPickerCard(f, onPick = pick, onClear = { vm.update { it.copy(inputPath = "", mediaInfo = null) } })
+        MediaInfoCard(f.mediaInfo)
+
+        SectionCard(title = "旋转") {
+            ChoiceChips(
+                options = listOf(0, 90, 180, 270),
+                selected = f.rotateDegrees,
+                labelOf = { if (it == 0) "不旋转" else "$it°" },
+                onSelect = { vm.update { s -> s.copy(rotateDegrees = it) } },
+            )
+        }
+
+        SectionCard(title = "翻转") {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text("水平翻转（左右镜像）", Modifier.weight(1f))
+                androidx.compose.material3.Switch(
+                    checked = f.flipHorizontal,
+                    onCheckedChange = { vm.update { s -> s.copy(flipHorizontal = it) } },
+                )
+            }
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text("垂直翻转（上下镜像）", Modifier.weight(1f))
+                androidx.compose.material3.Switch(
+                    checked = f.flipVertical,
+                    onCheckedChange = { vm.update { s -> s.copy(flipVertical = it) } },
+                )
+            }
+        }
+
+        OutputNamingSection(f, vm::update)
+    }
+}
+
+// ================================================================ 画面裁剪 ====
+
+@Composable
+fun CropScreen(vm: ToolViewModel = hiltViewModel()) {
+    val state by vm.state.collectAsStateWithLifecycle()
+    val form = state.form
+    val pick = rememberFilePicker(arrayOf("video/*")) { vm.onPickInput(it) }
+    val video = form.mediaInfo?.primaryVideo
+
+    ToolScaffold(feature = TaskFeature.CROP, vm = vm) { f ->
+        InputPickerCard(f, onPick = pick, onClear = { vm.update { it.copy(inputPath = "", mediaInfo = null) } })
+        MediaInfoCard(f.mediaInfo)
+
+        SectionCard(title = "裁剪区域") {
+            val srcW = video?.displayWidth ?: 0
+            val srcH = video?.displayHeight ?: 0
+            if (srcW > 0 && srcH > 0) {
+                Text(
+                    "原片尺寸 ${srcW} × ${srcH}",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                NumericField(
+                    label = "起点 X",
+                    value = f.cropX.toString(),
+                    onValueChange = { vm.update { s -> s.copy(cropX = it.toIntOrNull() ?: 0) } },
+                    modifier = Modifier.weight(1f),
+                )
+                NumericField(
+                    label = "起点 Y",
+                    value = f.cropY.toString(),
+                    onValueChange = { vm.update { s -> s.copy(cropY = it.toIntOrNull() ?: 0) } },
+                    modifier = Modifier.weight(1f),
+                )
+            }
+            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                NumericField(
+                    label = "宽度",
+                    value = f.cropWidth.toString(),
+                    onValueChange = { vm.update { s -> s.copy(cropWidth = it.toIntOrNull() ?: 0) } },
+                    modifier = Modifier.weight(1f),
+                )
+                NumericField(
+                    label = "高度",
+                    value = f.cropHeight.toString(),
+                    onValueChange = { vm.update { s -> s.copy(cropHeight = it.toIntOrNull() ?: 0) } },
+                    modifier = Modifier.weight(1f),
+                )
+            }
+            Text(
+                "宽度或高度留 0 表示裁到画面边缘。数值会向下取偶，避免画面错位。",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+
+        OutputNamingSection(f, vm::update)
+    }
+}
+
+// ================================================================ 提取画面 ====
+
+@Composable
+fun ThumbnailScreen(vm: ToolViewModel = hiltViewModel()) {
+    val state by vm.state.collectAsStateWithLifecycle()
+    val form = state.form
+    val pick = rememberFilePicker(arrayOf("video/*")) { vm.onPickInput(it) }
+
+    ToolScaffold(feature = TaskFeature.THUMBNAIL, vm = vm) { f ->
+        InputPickerCard(f, onPick = pick, onClear = { vm.update { it.copy(inputPath = "", mediaInfo = null) } })
+        MediaInfoCard(f.mediaInfo)
+
+        SectionCard(title = "截取位置") {
+            NumericField(
+                label = "时间点（秒）",
+                value = (f.frameAtUs / 1_000_000.0).toString(),
+                onValueChange = { text ->
+                    val sec = text.toDoubleOrNull() ?: 0.0
+                    vm.update { s -> s.copy(frameAtUs = (sec * 1_000_000).toLong()) }
+                },
+                supporting = "从视频的这一秒截取一帧画面",
+            )
+        }
+
+        SectionCard(title = "图片格式") {
+            ChoiceChips(
+                options = listOf("jpg", "png"),
+                selected = f.frameFormat,
+                labelOf = { if (it == "jpg") "JPG（体积小）" else "PNG（无损）" },
+                onSelect = { vm.update { s -> s.copy(frameFormat = it) } },
+            )
+            NumericField(
+                label = "宽度（0 表示原始尺寸）",
+                value = f.frameWidth.toString(),
+                onValueChange = { vm.update { s -> s.copy(frameWidth = it.toIntOrNull() ?: 0) } },
+            )
+        }
+
+        OutputNamingSection(f, vm::update)
+    }
+}
+
+// ================================================================ 视频变速 ====
+
+@Composable
+fun SpeedScreen(vm: ToolViewModel = hiltViewModel()) {
+    val state by vm.state.collectAsStateWithLifecycle()
+    val form = state.form
+    val pick = rememberFilePicker(arrayOf("video/*")) { vm.onPickInput(it) }
+
+    ToolScaffold(feature = TaskFeature.SPEED, vm = vm) { f ->
+        InputPickerCard(f, onPick = pick, onClear = { vm.update { it.copy(inputPath = "", mediaInfo = null) } })
+        MediaInfoCard(f.mediaInfo)
+
+        SectionCard(title = "播放速度") {
+            ChoiceChips(
+                options = listOf(0.25, 0.5, 1.0, 1.5, 2.0, 4.0),
+                selected = f.speedFactor,
+                labelOf = { if (it == 1.0) "原速" else "${it}x" },
+                onSelect = { vm.update { s -> s.copy(speedFactor = it) } },
+            )
+            LabeledSlider(
+                label = "自定义倍速",
+                value = f.speedFactor.toFloat(),
+                valueRange = 0.25f..4f,
+                steps = 14,
+                onValueChange = { vm.update { s -> s.copy(speedFactor = (it * 4).toInt() / 4.0) } },
+                valueLabel = { "${(it * 4).toInt() / 4.0}x" },
+            )
+            Text(
+                "加速会缩短时长，减速会拉长。音频会同步变速并保持音调。",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+
+        OutputNamingSection(f, vm::update)
+    }
+}
+
+// ============================================================ 去水印 / 遮挡 ====
+
+@Composable
+fun DelogoScreen(vm: ToolViewModel = hiltViewModel()) {
+    val state by vm.state.collectAsStateWithLifecycle()
+    val form = state.form
+    val pick = rememberFilePicker(arrayOf("video/*")) { vm.onPickInput(it) }
+    val video = form.mediaInfo?.primaryVideo
+
+    ToolScaffold(feature = TaskFeature.DELOGO, vm = vm) { f ->
+        InputPickerCard(f, onPick = pick, onClear = { vm.update { it.copy(inputPath = "", mediaInfo = null) } })
+        MediaInfoCard(f.mediaInfo)
+
+        SectionCard(title = "遮挡方式") {
+            ChoiceChips(
+                options = DelogoMode.entries.toList(),
+                selected = f.delogoMode,
+                labelOf = { it.label },
+                onSelect = { vm.update { s -> s.copy(delogoMode = it) } },
+            )
+            Text(
+                f.delogoMode.description,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+
+        SectionCard(title = "遮挡区域") {
+            val srcW = video?.displayWidth ?: 0
+            val srcH = video?.displayHeight ?: 0
+            if (srcW > 0 && srcH > 0) {
+                Text(
+                    "原片尺寸 $srcW × $srcH",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                NumericField(
+                    label = "起点 X",
+                    value = f.delogoX.toString(),
+                    onValueChange = { vm.update { s -> s.copy(delogoX = it.toIntOrNull() ?: 0) } },
+                    modifier = Modifier.weight(1f),
+                )
+                NumericField(
+                    label = "起点 Y",
+                    value = f.delogoY.toString(),
+                    onValueChange = { vm.update { s -> s.copy(delogoY = it.toIntOrNull() ?: 0) } },
+                    modifier = Modifier.weight(1f),
+                )
+            }
+            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                NumericField(
+                    label = "宽度",
+                    value = f.delogoWidth.toString(),
+                    onValueChange = { vm.update { s -> s.copy(delogoWidth = it.toIntOrNull() ?: 0) } },
+                    modifier = Modifier.weight(1f),
+                )
+                NumericField(
+                    label = "高度",
+                    value = f.delogoHeight.toString(),
+                    onValueChange = { vm.update { s -> s.copy(delogoHeight = it.toIntOrNull() ?: 0) } },
+                    modifier = Modifier.weight(1f),
+                )
+            }
+            Text(
+                "先量出水印在画面里的位置和大小再填进来。区域越大处理越慢。",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+
+        OutputNamingSection(f, vm::update)
+    }
+}
+
+// ============================================================ 图片转视频 ====
+
+@Composable
+fun SlideshowScreen(vm: ToolViewModel = hiltViewModel()) {
+    val state by vm.state.collectAsStateWithLifecycle()
+    val form = state.form
+    val pickImage = rememberFilePicker(arrayOf("image/*")) { vm.onPickExtra(it) }
+
+    ToolScaffold(feature = TaskFeature.SLIDESHOW, vm = vm) { f ->
+        SectionCard(title = "图片") {
+            if (f.extraInputs.isEmpty()) {
+                Text(
+                    "还没有添加图片",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            } else {
+                f.extraInputs.forEachIndexed { index, path ->
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text(
+                            "${index + 1}. ${displayNameFromInput(path)}",
+                            style = MaterialTheme.typography.bodyMedium,
+                            modifier = Modifier.weight(1f),
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                        TextButton(onClick = { vm.removeExtra(index) }) { Text("移除") }
+                    }
+                }
+            }
+            OutlinedButton(onClick = pickImage, modifier = Modifier.fillMaxWidth()) {
+                Icon(Icons.Default.FolderOpen, null, Modifier.size(18.dp))
+                Spacer(Modifier.width(8.dp))
+                Text("添加图片")
+            }
+            Text(
+                "按列表顺序播放。尺寸不一的图片会统一缩放到 1080p 并居中补边。",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+
+        SectionCard(title = "播放参数") {
+            NumericField(
+                label = "每张停留（秒）",
+                value = f.slideshowSeconds.toString(),
+                onValueChange = { vm.update { s -> s.copy(slideshowSeconds = it.toDoubleOrNull() ?: 3.0) } },
+            )
+            NumericField(
+                label = "帧率",
+                value = f.slideshowFps.toString(),
+                onValueChange = { vm.update { s -> s.copy(slideshowFps = it.toIntOrNull() ?: 30) } },
+            )
+        }
+
+        OutputNamingSection(f, vm::update)
+    }
+}
+
 // ================================================================ 命令行 ====
 
 @Composable

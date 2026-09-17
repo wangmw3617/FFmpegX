@@ -15,13 +15,19 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Animation
 import androidx.compose.material.icons.filled.ContentCut
+import androidx.compose.material.icons.filled.Crop
 import androidx.compose.material.icons.filled.ExpandLess
 import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material.icons.filled.GraphicEq
+import androidx.compose.material.icons.filled.Healing
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Layers
 import androidx.compose.material.icons.filled.Link
+import androidx.compose.material.icons.filled.PhotoCamera
 import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.filled.ScreenRotation
+import androidx.compose.material.icons.filled.Slideshow
+import androidx.compose.material.icons.filled.SlowMotionVideo
 import androidx.compose.material.icons.filled.Speed
 import androidx.compose.material.icons.filled.Subtitles
 import androidx.compose.material.icons.filled.SwapHoriz
@@ -56,11 +62,17 @@ import com.zhiwei.ffmpegx.ui.nav.AudioRoute
 import com.zhiwei.ffmpegx.ui.nav.CompressRoute
 import com.zhiwei.ffmpegx.ui.nav.ConcatRoute
 import com.zhiwei.ffmpegx.ui.nav.ConvertRoute
+import com.zhiwei.ffmpegx.ui.nav.CropRoute
+import com.zhiwei.ffmpegx.ui.nav.DelogoRoute
 import com.zhiwei.ffmpegx.ui.nav.GifRoute
 import com.zhiwei.ffmpegx.ui.nav.OverlayRoute
 import com.zhiwei.ffmpegx.ui.nav.ProbeRoute
 import com.zhiwei.ffmpegx.ui.nav.RawCommandRoute
+import com.zhiwei.ffmpegx.ui.nav.RotateRoute
+import com.zhiwei.ffmpegx.ui.nav.SlideshowRoute
+import com.zhiwei.ffmpegx.ui.nav.SpeedRoute
 import com.zhiwei.ffmpegx.ui.nav.SubtitleRoute
+import com.zhiwei.ffmpegx.ui.nav.ThumbnailRoute
 import com.zhiwei.ffmpegx.ui.nav.TrimRoute
 
 private data class ToolEntry(
@@ -82,6 +94,12 @@ private val COMMON_TOOLS = listOf(
 
 /** 更多功能：默认折叠，收纳使用频率较低但更进阶的工具 */
 private val MORE_TOOLS = listOf(
+    ToolEntry("旋转翻转", "转 90° / 镜像", Icons.Default.ScreenRotation, RotateRoute),
+    ToolEntry("画面裁剪", "按区域裁剪画面", Icons.Default.Crop, CropRoute),
+    ToolEntry("提取画面", "从视频截取一帧", Icons.Default.PhotoCamera, ThumbnailRoute),
+    ToolEntry("视频变速", "0.25x ~ 4x", Icons.Default.SlowMotionVideo, SpeedRoute),
+    ToolEntry("去水印", "模糊 / 填补遮挡区域", Icons.Default.Healing, DelogoRoute),
+    ToolEntry("图片转视频", "多张图片合成视频", Icons.Default.Slideshow, SlideshowRoute),
     ToolEntry("字幕处理", "烧录 / 提取 / 封装", Icons.Default.Subtitles, SubtitleRoute),
     ToolEntry("水印画中画", "图片水印 / 分屏", Icons.Default.Layers, OverlayRoute),
     ToolEntry("媒体信息", "查看编码 / 分辨率等信息", Icons.Default.Info, ProbeRoute),

@@ -129,9 +129,9 @@ fun ToolScaffold(
 
         if (!state.nativeReady) {
             WarningBanner(
-                title = "FFmpeg 核心不可用",
-                message = "FFmpeg 核心未能加载，当前只能浏览界面，无法执行转码。" +
-                    "请确认安装包包含本机 CPU 架构（arm64-v8a），或重新安装应用。",
+                title = "转码引擎不可用",
+                message = "当前设备上无法启动转码引擎，只能浏览界面。" +
+                    "请尝试重新安装应用；若问题依旧，可在「控制台」查看详细日志。",
             )
         }
 

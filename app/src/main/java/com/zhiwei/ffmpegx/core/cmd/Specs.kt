@@ -226,3 +226,60 @@ data class ThumbnailSpec(
     val format: String = "jpg",
     val quality: Int = 3,
 )
+
+/** 旋转 / 翻转 */
+data class RotateSpec(
+    val output: String,
+    /** 顺时针角度，取值 0 / 90 / 180 / 270 */
+    val degrees: Int = 0,
+    val flipHorizontal: Boolean = false,
+    val flipVertical: Boolean = false,
+    val video: VideoEncodeSpec,
+    val audio: AudioEncodeSpec,
+)
+
+/** 画面裁剪 */
+data class CropSpec(
+    val output: String,
+    val x: Int,
+    val y: Int,
+    val width: Int,
+    val height: Int,
+    val video: VideoEncodeSpec,
+    val audio: AudioEncodeSpec,
+)
+
+/** 视频变速 */
+data class SpeedSpec(
+    val output: String,
+    /** 播放倍速：>1 加速（时长变短），<1 减速 */
+    val factor: Double,
+    /** 保持音调，避免加速后声音变尖 */
+    val keepPitch: Boolean = true,
+    val video: VideoEncodeSpec,
+    val audio: AudioEncodeSpec,
+)
+
+/** 去水印 / 区域遮挡 */
+data class DelogoSpec(
+    val output: String,
+    val x: Int,
+    val y: Int,
+    val width: Int,
+    val height: Int,
+    /** blur / delogo / mosaic */
+    val mode: String = "blur",
+    val video: VideoEncodeSpec,
+    val audio: AudioEncodeSpec,
+)
+
+/** 图片转视频 */
+data class SlideshowSpec(
+    val output: String,
+    /** 图片路径列表，按顺序播放 */
+    val inputs: List<String>,
+    /** 每张停留秒数 */
+    val secondsEach: Double = 3.0,
+    val fps: Int = 30,
+    val video: VideoEncodeSpec,
+)

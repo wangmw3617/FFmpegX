@@ -246,7 +246,7 @@ fun OutputNamingSection(form: ToolForm, onUpdate: FormUpdate) {
             modifier = Modifier.fillMaxWidth(),
         )
         Text(
-            "留空时会保存到应用专属目录，无需存储权限；完成后可在任务列表里「导出到相册」。",
+            "留空时会自动保存到 Download/FFmpegX，无需任何权限。",
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )

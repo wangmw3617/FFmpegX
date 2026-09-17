@@ -41,6 +41,24 @@ object SubtitleRoute
 object OverlayRoute
 
 @Serializable
+object RotateRoute
+
+@Serializable
+object CropRoute
+
+@Serializable
+object ThumbnailRoute
+
+@Serializable
+object SpeedRoute
+
+@Serializable
+object DelogoRoute
+
+@Serializable
+object SlideshowRoute
+
+@Serializable
 object ProbeRoute
 
 /** 原始命令行工具（区别于底部导航的「命令」日志页） */

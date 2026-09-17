@@ -43,8 +43,14 @@ import com.zhiwei.ffmpegx.ui.nav.ConsoleRoute
 import com.zhiwei.ffmpegx.ui.nav.ConvertRoute
 import com.zhiwei.ffmpegx.ui.nav.GifRoute
 import com.zhiwei.ffmpegx.ui.nav.HomeRoute
+import com.zhiwei.ffmpegx.ui.nav.CropRoute
+import com.zhiwei.ffmpegx.ui.nav.DelogoRoute
 import com.zhiwei.ffmpegx.ui.nav.OverlayRoute
 import com.zhiwei.ffmpegx.ui.nav.ProbeRoute
+import com.zhiwei.ffmpegx.ui.nav.RotateRoute
+import com.zhiwei.ffmpegx.ui.nav.SlideshowRoute
+import com.zhiwei.ffmpegx.ui.nav.SpeedRoute
+import com.zhiwei.ffmpegx.ui.nav.ThumbnailRoute
 import com.zhiwei.ffmpegx.ui.nav.QueueRoute
 import com.zhiwei.ffmpegx.ui.nav.RawCommandRoute
 import com.zhiwei.ffmpegx.ui.nav.SettingsRoute
@@ -61,9 +67,15 @@ import com.zhiwei.ffmpegx.ui.tool.CompressScreen
 import com.zhiwei.ffmpegx.ui.tool.ConcatScreen
 import com.zhiwei.ffmpegx.ui.tool.ConsoleToolScreen
 import com.zhiwei.ffmpegx.ui.tool.ConvertScreen
+import com.zhiwei.ffmpegx.ui.tool.CropScreen
+import com.zhiwei.ffmpegx.ui.tool.DelogoScreen
 import com.zhiwei.ffmpegx.ui.tool.GifScreen
 import com.zhiwei.ffmpegx.ui.tool.OverlayScreen
+import com.zhiwei.ffmpegx.ui.tool.RotateScreen
+import com.zhiwei.ffmpegx.ui.tool.SlideshowScreen
+import com.zhiwei.ffmpegx.ui.tool.SpeedScreen
 import com.zhiwei.ffmpegx.ui.tool.SubtitleScreen
+import com.zhiwei.ffmpegx.ui.tool.ThumbnailScreen
 import com.zhiwei.ffmpegx.ui.tool.TrimScreen
 
 private data class TopLevelTab(
@@ -139,6 +151,12 @@ fun AppRoot(settings: AppSettings) {
             composable<ConcatRoute> { ConcatScreen() }
             composable<SubtitleRoute> { SubtitleScreen() }
             composable<OverlayRoute> { OverlayScreen() }
+            composable<RotateRoute> { RotateScreen() }
+            composable<CropRoute> { CropScreen() }
+            composable<ThumbnailRoute> { ThumbnailScreen() }
+            composable<SpeedRoute> { SpeedScreen() }
+            composable<DelogoRoute> { DelogoScreen() }
+            composable<SlideshowRoute> { SlideshowScreen() }
             composable<ProbeRoute> { ProbeScreen() }
             composable<RawCommandRoute> { ConsoleToolScreen() }
         }

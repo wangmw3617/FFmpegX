@@ -58,6 +58,13 @@ import javax.inject.Inject
  *    不会出现某个页面漏掉「零拷贝需要无滤镜」这类约束；
  *  · 代价：状态对象偏大，各页面只读写自己关心的字段。
  */
+/** 遮挡水印的方式 */
+enum class DelogoMode(val label: String, val description: String) {
+    BLUR("模糊", "对该区域做模糊处理，适合形状不规则的文字水印"),
+    DELOGO("智能填补", "用周边像素插值填补，适合纯色背景上的台标"),
+    MOSAIC("马赛克", "像素化处理，遮盖力度最强"),
+}
+
 data class ToolForm(
     // ---- 输入 ----
     val inputPath: String = "",
@@ -127,6 +134,40 @@ data class ToolForm(
     val overlayFrom: Double = 0.0,
     val overlayTo: Double = 0.0,
     val stackEdge: Int = 720,
+
+    // ---- 旋转 / 翻转 ----
+    /** 顺时针旋转角度，取值 0 / 90 / 180 / 270 */
+    val rotateDegrees: Int = 0,
+    val flipHorizontal: Boolean = false,
+    val flipVertical: Boolean = false,
+
+    // ---- 画面裁剪 ----
+    val cropX: Int = 0,
+    val cropY: Int = 0,
+    val cropWidth: Int = 0,
+    val cropHeight: Int = 0,
+
+    // ---- 提取画面 ----
+    val frameAtUs: Long = 0,
+    val frameFormat: String = "jpg",
+    val frameWidth: Int = 0,
+    val frameQuality: Int = 2,
+
+    // ---- 视频变速 ----
+    /** 播放倍速：2.0 表示两倍速（时长减半） */
+    val speedFactor: Double = 1.0,
+
+    // ---- 去水印 / 遮挡 ----
+    val delogoX: Int = 0,
+    val delogoY: Int = 0,
+    val delogoWidth: Int = 0,
+    val delogoHeight: Int = 0,
+    val delogoMode: DelogoMode = DelogoMode.BLUR,
+
+    // ---- 图片转视频 ----
+    /** 每张图片停留秒数 */
+    val slideshowSeconds: Double = 3.0,
+    val slideshowFps: Int = 30,
 
     // ---- 命令行 ----
     val rawCommand: String = "",
@@ -690,6 +731,136 @@ class ToolViewModel @Inject constructor(
                 }
             }
 
+            TaskFeature.ROTATE -> listOf(
+                Commands.rotate(
+                    settings = settings,
+                    plan = plan,
+                    inputPath = form.inputPath,
+                    spec = RotateSpec(
+                        output = outputFile.absolutePath,
+                        degrees = form.rotateDegrees,
+                        flipHorizontal = form.flipHorizontal,
+                        flipVertical = form.flipVertical,
+                        video = video,
+                        audio = audioOrNull,
+                    ),
+                ),
+            )
+
+            TaskFeature.CROP -> {
+                // 宽高留空表示「从起点裁到边缘」，这里补成实际尺寸，
+                // 否则会生成 crop=0:0 这种必错的命令
+                val srcW = form.mediaInfo?.primaryVideo?.displayWidth ?: 0
+                val srcH = form.mediaInfo?.primaryVideo?.displayHeight ?: 0
+                val w = if (form.cropWidth > 0) form.cropWidth else srcW - form.cropX
+                val h = if (form.cropHeight > 0) form.cropHeight else srcH - form.cropY
+                if (w <= 0 || h <= 0) {
+                    emptyList()
+                } else {
+                    listOf(
+                        Commands.crop(
+                            settings = settings,
+                            plan = plan,
+                            inputPath = form.inputPath,
+                            spec = CropSpec(
+                                output = outputFile.absolutePath,
+                                x = form.cropX,
+                                y = form.cropY,
+                                width = w,
+                                height = h,
+                                video = video,
+                                audio = audioOrNull,
+                            ),
+                        ),
+                    )
+                }
+            }
+
+            TaskFeature.THUMBNAIL -> {
+                // 输出扩展名必须与图片格式一致：路径若是 .mp4 而内容是 jpg，
+                // ffmpeg 会按容器名去猜格式并直接报错。
+                val frameOut = File(
+                    outputFile.parentFile,
+                    outputFile.nameWithoutExtension + "." + form.frameFormat,
+                )
+                listOf(
+                    Commands.thumbnail(
+                        settings = settings,
+                        inputPath = form.inputPath,
+                        spec = ThumbnailSpec(
+                            output = frameOut.absolutePath,
+                            atUs = form.frameAtUs,
+                            width = form.frameWidth,
+                            format = form.frameFormat,
+                            quality = form.frameQuality,
+                        ),
+                    ),
+                )
+            }
+
+            TaskFeature.SPEED -> listOf(
+                Commands.speed(
+                    settings = settings,
+                    plan = plan,
+                    inputPath = form.inputPath,
+                    spec = SpeedSpec(
+                        output = outputFile.absolutePath,
+                        factor = form.speedFactor,
+                        video = video,
+                        audio = audioOrNull,
+                    ),
+                ),
+            )
+
+            TaskFeature.DELOGO -> {
+                if (form.delogoWidth <= 0 || form.delogoHeight <= 0) {
+                    emptyList()
+                } else {
+                    listOf(
+                        Commands.delogo(
+                            settings = settings,
+                            plan = plan,
+                            inputPath = form.inputPath,
+                            spec = DelogoSpec(
+                                output = outputFile.absolutePath,
+                                x = form.delogoX,
+                                y = form.delogoY,
+                                width = form.delogoWidth,
+                                height = form.delogoHeight,
+                                mode = when (form.delogoMode) {
+                                    DelogoMode.MOSAIC -> "mosaic"
+                                    DelogoMode.DELOGO -> "delogo"
+                                    DelogoMode.BLUR -> "blur"
+                                },
+                                video = video,
+                                audio = audioOrNull,
+                            ),
+                        ),
+                    )
+                }
+            }
+
+            TaskFeature.SLIDESHOW -> {
+                val images = form.extraInputs.filter { it.isNotBlank() }
+                if (images.isEmpty()) {
+                    emptyList()
+                } else {
+                    listOf(
+                        Commands.slideshow(
+                            settings = settings,
+                            plan = plan,
+                            spec = SlideshowSpec(
+                                output = outputFile.absolutePath,
+                                inputs = images,
+                                secondsEach = form.slideshowSeconds,
+                                fps = form.slideshowFps,
+                                video = video,
+                            ),
+                        ),
+                    )
+                }
+            }
+
             TaskFeature.CONSOLE -> {
                 val tokens = parseRawCommand(form.rawCommand)
                 if (tokens.isEmpty()) emptyList() else listOf(tokens)
@@ -812,6 +983,12 @@ class ToolViewModel @Inject constructor(
         TaskFeature.CONCAT -> "_merged"
         TaskFeature.SUBTITLE -> "_subbed"
         TaskFeature.OVERLAY -> "_overlay"
+        TaskFeature.ROTATE -> "_rotated"
+        TaskFeature.CROP -> "_cropped"
+        TaskFeature.THUMBNAIL -> "_frame"
+        TaskFeature.SPEED -> "_speed"
+        TaskFeature.DELOGO -> "_clean"
+        TaskFeature.SLIDESHOW -> "_slideshow"
         else -> "_out"
     }
 

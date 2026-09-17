@@ -568,6 +568,167 @@ object Commands {
             output(spec.output)
         }.build()
 
+    // ============================================================ 旋转 / 翻转 ====
+
+    fun rotate(
+        settings: AppSettings,
+        plan: HardwarePlan,
+        inputPath: String,
+        spec: RotateSpec,
+    ): List<String> {
+        val cmd = base(settings)
+        cmd.input(inputPath, plan.inputArgs)
+
+        // transpose 只认 0/1/2/3（逆时针 90 / 顺时针 90 / 顺时针 90 的镜像 / 逆时针 90 的镜像），
+        // 180° 用两次 90° 表达。
+        val filters = buildList {
+            when ((spec.degrees % 360 + 360) % 360) {
+                90 -> add("transpose=1")
+                180 -> add("transpose=2,transpose=2")
+                270 -> add("transpose=2")
+            }
+            if (spec.flipHorizontal) add("hflip")
+            if (spec.flipVertical) add("vflip")
+        }
+        cmd.filterGraph(filters)
+
+        cmd.map("0:v:0?")
+        applyVideoEncoding(cmd, plan, spec.video, 0.0)
+        cmd.map("0:a:0?")
+        applyAudioEncoding(cmd, spec.audio)
+        cmd.output(spec.output)
+        return cmd.build()
+    }
+
+    // ================================================================ 画面裁剪 ====
+
+    fun crop(
+        settings: AppSettings,
+        plan: HardwarePlan,
+        inputPath: String,
+        spec: CropSpec,
+    ): List<String> {
+        val cmd = base(settings)
+        cmd.input(inputPath, plan.inputArgs)
+
+        // 宽高各取偶数：yuv420p 的色度是 2×2 采样，奇数尺寸会导致错位或直接报错
+        val w = (spec.width / 2) * 2
+        val h = (spec.height / 2) * 2
+        cmd.filterGraph(listOf("crop=$w:$h:${spec.x}:${spec.y}"))
+
+        cmd.map("0:v:0?")
+        applyVideoEncoding(cmd, plan, spec.video, 0.0)
+        cmd.map("0:a:0?")
+        applyAudioEncoding(cmd, spec.audio)
+        cmd.output(spec.output)
+        return cmd.build()
+    }
+
+    // ================================================================ 变速 ====
+
+    fun speed(
+        settings: AppSettings,
+        plan: HardwarePlan,
+        inputPath: String,
+        spec: SpeedSpec,
+    ): List<String> {
+        val cmd = base(settings)
+        cmd.input(inputPath, plan.inputArgs)
+
+        val factor = spec.factor.coerceIn(0.1, 10.0)
+        // 视频靠改时间戳实现：factor > 1（加速）时 PTS 变小，时长随之缩短
+        cmd.filterGraph(listOf("setpts=${formatDouble(1.0 / factor)}*PTS"))
+
+        cmd.map("0:v:0?")
+        applyVideoEncoding(cmd, plan, spec.video, 0.0)
+        cmd.map("0:a:0?")
+        // 音频用 atempo 变速但保持音调；它单次只支持 0.5~2.0，
+        // 超出范围由 buildAtempoChain 自动串联。
+        cmd.audioFilterGraph(listOf(buildAtempoChain(factor)))
+        applyAudioEncoding(cmd, spec.audio)
+        cmd.output(spec.output)
+        return cmd.build()
+    }
+
+    // ============================================================ 去水印 / 遮挡 ====
+
+    fun delogo(
+        settings: AppSettings,
+        plan: HardwarePlan,
+        inputPath: String,
+        spec: DelogoSpec,
+    ): List<String> {
+        val cmd = base(settings)
+        cmd.input(inputPath, plan.inputArgs)
+
+        val w = (spec.width / 2) * 2
+        val h = (spec.height / 2) * 2
+
+        if (spec.mode == "mosaic") {
+            // 马赛克：把该区域单独抠出来做强模糊，再盖回原位置。
+            // 需要 filter_complex，因此不走 -vf。
+            cmd.raw(
+                "-filter_complex",
+                "[0:v]crop=$w:$h:${spec.x}:${spec.y},boxblur=20:3[m];" +
+                    "[0:v][m]overlay=${spec.x}:${spec.y}",
+            )
+            cmd.raw("-map", "[v]")
+        } else {
+            // delogo 用周边像素插值填补，区域必须完全落在画面内部，所以至少离边 1px
+            val x = spec.x.coerceAtLeast(1)
+            val y = spec.y.coerceAtLeast(1)
+            cmd.filterGraph(listOf("delogo=x=$x:y=$y:w=$w:h=$h"))
+            cmd.map("0:v:0?")
+        }
+
+        applyVideoEncoding(cmd, plan, spec.video, 0.0)
+        cmd.map("0:a:0?")
+        applyAudioEncoding(cmd, spec.audio)
+        cmd.output(spec.output)
+        return cmd.build()
+    }
+
+    // ============================================================ 图片转视频 ====
+
+    fun slideshow(
+        settings: AppSettings,
+        plan: HardwarePlan,
+        spec: SlideshowSpec,
+    ): List<String> {
+        require(spec.inputs.isNotEmpty()) { "至少需要一张图片" }
+
+        val cmd = base(settings)
+        val fps = spec.fps.coerceIn(1, 60)
+
+        // 每张图先用 -loop 1 生成一段固定时长的视频流，再用 concat 滤镜串联。
+        // 必须先统一尺寸：concat 遇到分辨率不一致会直接报错。
+        spec.inputs.forEach { path ->
+            cmd.input(
+                path,
+                listOf(
+                    "-loop", "1",
+                    "-framerate", fps.toString(),
+                    "-t", formatDouble(spec.secondsEach),
+                ),
+            )
+        }
+
+        val scaled = spec.inputs.indices.joinToString("") { i ->
+            "[$i:v]scale=1920:1080:force_original_aspect_ratio=decrease," +
+                "pad=1920:1080:(ow-iw)/2:(oh-ih)/2,setsar=1[v$i];"
+        }
+        val joined = spec.inputs.indices.joinToString("") { "[v$it]" }
+        cmd.raw(
+            "-filter_complex",
+            "$scaled$joined concat=n=${spec.inputs.size}:v=1:a=0[v]",
+        )
+        cmd.raw("-map", "[v]")
+
+        applyVideoEncoding(cmd, plan, spec.video, fps.toDouble())
+        cmd.output(spec.output)
+        return cmd.build()
+    }
+
     // ============================================================ 内部：编码参数 ====
 
     private fun applyVideoEncoding(

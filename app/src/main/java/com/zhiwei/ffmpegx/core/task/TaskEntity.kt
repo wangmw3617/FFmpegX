@@ -29,6 +29,12 @@ enum class TaskFeature(val label: String) {
     CONCAT("视频拼接"),
     SUBTITLE("字幕处理"),
     OVERLAY("水印与画中画"),
+    ROTATE("旋转与翻转"),
+    CROP("画面裁剪"),
+    THUMBNAIL("提取画面"),
+    SPEED("视频变速"),
+    DELOGO("去水印与遮挡"),
+    SLIDESHOW("图片转视频"),
     CONSOLE("命令行"),
     OTHER("其它"),
 }
