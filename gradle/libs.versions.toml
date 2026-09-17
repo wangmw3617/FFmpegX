@@ -35,6 +35,18 @@ splashscreen = "1.0.1"
 # ---------------------------------------------------------------------------
 ffmpegKitNext = "9.0.0"
 
+# ---------------------------------------------------------------------------
+# Liquid Glass（毛玻璃）视觉效果：Kyant0/AndroidLiquidGlass
+#
+# 库名是 backdrop，发布在 Maven Central。它只提供底层绘制原语
+# （Backdrop / drawBackdrop / layerBackdrop），**不含任何高层组件**，
+# 卡片、按钮、导航栏都要自己按它的原语拼。
+#
+# shapes 是配套的形状库（Capsule / RoundedCorner 等），单独发版。
+# ---------------------------------------------------------------------------
+liquidGlass = "2.0.1"
+kyantShapes = "1.2.1"
+
 junit = "4.13.2"
 
 [libraries]
@@ -85,6 +97,10 @@ junit = { module = "junit:junit", version.ref = "junit" }
 # FFmpegKitNext：官方续作，从本地 Maven 仓库解析（自己构建，见 docs/）
 # 会传递依赖 com.arthenica:smart-exception-java:0.2.1（走 mavenCentral）
 ffmpeg-kit-next = { module = "com.arthenica:ffmpeg-kit-next", version.ref = "ffmpegKitNext" }
+
+# Liquid Glass 效果（见上方 versions 注释）
+kyant-backdrop = { module = "io.github.kyant0:backdrop", version.ref = "liquidGlass" }
+kyant-shapes = { module = "io.github.kyant0:shapes", version.ref = "kyantShapes" }
 
 [plugins]
 android-application = { id = "com.android.application", version.ref = "agp" }
