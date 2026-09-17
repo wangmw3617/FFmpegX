@@ -5,7 +5,7 @@ package com.zhiwei.ffmpegx.core.hw
  *
  * `mcName` 是 FFmpeg 里对应的 MediaCodec 硬件编码器名；
  * `swName` 是软件编码器名，为 null 表示当前构建的 FFmpeg 没有包含它
- * （需要在 scripts/build-ffmpeg-android.sh 里加对应 --enable-lib*）。
+ * （需要在 scripts/build-ffmpeg-kit-next.sh 里加对应 --enable-lib*）。
  */
 enum class VideoCodec(
     val label: String,
