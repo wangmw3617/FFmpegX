@@ -13,22 +13,19 @@ import kotlinx.coroutines.withContext
 import java.io.File
 
 /**
- * 输出路径解析 + 导出到系统媒体库。
+ * 输出路径解析 + 导出到公共 Download 目录。
  *
- * 默认输出到应用私有外部目录（`Android/data/<pkg>/files/Movies/FFmpegX`）：
- *  - 不需要任何存储权限；
- *  - 卸载 App 时一起清理，不留垃圾。
+ * ffmpeg 先写到应用私有外部目录（`Android/data/<pkg>/files/...`）—— 不需要任何存储权限，
+ * 写入最可靠；任务成功后由 [publishToMediaStore] 自动导出到 `Download/FFmpegX`，
+ * 用户能在文件管理器里直接看到结果。
  *
- * 需要出现在相册/文件管理器里时，走 [publishToMediaStore] 显式导出。
+ * 不直接让 ffmpeg 写公共目录的原因：Android 10 起不允许按路径写公共存储，
+ * 只能走 MediaStore（拿到的是 content Uri，而 ffmpeg 需要文件路径）。
  */
 object MediaFiles {
 
     private const val TAG = "MediaFiles"
     const val APP_FOLDER = "FFmpegX"
-
-    private val VIDEO_EXT = setOf("mp4", "mkv", "webm", "mov", "ts", "m4v", "3gp", "avi")
-    private val AUDIO_EXT = setOf("mp3", "m4a", "aac", "opus", "flac", "wav", "ogg")
-    private val IMAGE_EXT = setOf("jpg", "jpeg", "png", "webp", "gif")
 
     /** 默认输出目录，不存在会自动创建 */
     fun defaultOutputDir(context: Context, customDir: String?): File {
@@ -99,19 +96,14 @@ object MediaFiles {
         else -> "application/octet-stream"
     }
 
-    private fun mediaKindOf(extension: String): Kind = when (extension.lowercase()) {
-        in VIDEO_EXT -> Kind.VIDEO
-        in AUDIO_EXT -> Kind.AUDIO
-        in IMAGE_EXT -> Kind.IMAGE
-        else -> Kind.OTHER
-    }
-
-    private enum class Kind { VIDEO, AUDIO, IMAGE, OTHER }
-
     /**
-     * 把结果导出到系统媒体库，使其出现在相册 / 音乐 / 下载目录中。
+     * 把结果导出到公共 `Download/<folderName>` 目录。
      *
-     * @return 新文件的 content Uri；失败返回 null
+     * - Android 10+：走 MediaStore（不能按路径写公共目录），无需任何权限；
+     * - Android 9 及以下：直接写文件 + 媒体扫描，依赖清单里已声明的
+     *   `WRITE_EXTERNAL_STORAGE`（`maxSdkVersion=28`）。
+     *
+     * @return 新文件的 Uri；失败返回 null（调用方应保留私有副本作为兜底）
      */
     suspend fun publishToMediaStore(
         context: Context,
@@ -121,63 +113,54 @@ object MediaFiles {
     ): Uri? = withContext(Dispatchers.IO) {
         if (!source.exists()) return@withContext null
         val mime = mimeOf(extension)
-        val kind = mediaKindOf(extension)
         val displayName = source.name
 
         runCatching {
-            val collection = when (kind) {
-                Kind.VIDEO -> MediaStore.Video.Media.EXTERNAL_CONTENT_URI
-                Kind.AUDIO -> MediaStore.Audio.Media.EXTERNAL_CONTENT_URI
-                Kind.IMAGE -> MediaStore.Images.Media.EXTERNAL_CONTENT_URI
-                Kind.OTHER -> MediaStore.Downloads.EXTERNAL_CONTENT_URI
-            }
-
-            val values = ContentValues().apply {
-                put(MediaStore.MediaColumns.DISPLAY_NAME, displayName)
-                put(MediaStore.MediaColumns.MIME_TYPE, mime)
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                    put(MediaStore.MediaColumns.RELATIVE_PATH, relativePathFor(kind, folderName))
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                val resolver = context.contentResolver
+                val values = ContentValues().apply {
+                    put(MediaStore.MediaColumns.DISPLAY_NAME, displayName)
+                    put(MediaStore.MediaColumns.MIME_TYPE, mime)
+                    put(
+                        MediaStore.MediaColumns.RELATIVE_PATH,
+                        "${Environment.DIRECTORY_DOWNLOADS}/$folderName",
+                    )
                     put(MediaStore.MediaColumns.IS_PENDING, 1)
                 }
-            }
+                val uri = resolver.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, values)
+                    ?: return@runCatching null
 
-            val resolver = context.contentResolver
-            val uri = resolver.insert(collection, values)
-                ?: return@runCatching null
+                resolver.openOutputStream(uri)?.use { output ->
+                    source.inputStream().use { input -> input.copyTo(output, DEFAULT_BUFFER_SIZE) }
+                } ?: run {
+                    resolver.delete(uri, null, null)
+                    return@runCatching null
+                }
 
-            resolver.openOutputStream(uri)?.use { output ->
-                source.inputStream().use { input -> input.copyTo(output, DEFAULT_BUFFER_SIZE) }
-            } ?: run {
-                resolver.delete(uri, null, null)
-                return@runCatching null
-            }
-
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
                 resolver.update(
                     uri,
                     ContentValues().apply { put(MediaStore.MediaColumns.IS_PENDING, 0) },
                     null,
                     null,
                 )
+                uri
             } else {
+                @Suppress("DEPRECATION")
+                val base = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)
+                val dir = File(base, folderName)
+                if (!dir.exists() && !dir.mkdirs()) return@runCatching null
+                val target = File(dir, displayName)
+                source.inputStream().use { input ->
+                    target.outputStream().use { output -> input.copyTo(output, DEFAULT_BUFFER_SIZE) }
+                }
                 MediaScannerConnection.scanFile(
                     context,
-                    arrayOf(source.absolutePath),
+                    arrayOf(target.absolutePath),
                     arrayOf(mime),
                     null,
                 )
+                Uri.fromFile(target)
             }
-            uri
-        }.onFailure { Log.e(TAG, "导出到媒体库失败", it) }.getOrNull()
-    }
-
-    private fun relativePathFor(kind: Kind, folder: String): String {
-        val base = when (kind) {
-            Kind.VIDEO -> Environment.DIRECTORY_MOVIES
-            Kind.AUDIO -> Environment.DIRECTORY_MUSIC
-            Kind.IMAGE -> Environment.DIRECTORY_PICTURES
-            Kind.OTHER -> Environment.DIRECTORY_DOWNLOADS
-        }
-        return "$base/$folder"
+        }.onFailure { Log.e(TAG, "导出到 Download/$folderName 失败", it) }.getOrNull()
     }
 }
