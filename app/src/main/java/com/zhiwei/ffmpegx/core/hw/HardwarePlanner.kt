@@ -269,7 +269,10 @@ object HardwarePlanCalculator {
 
         // Vulkan 滤镜链（仅纯缩放场景）
         if (request.preferVulkanFilters && report.soc.suggestVulkanFilters) {
-            if (request.isPureScale && !request.hasCpuVideoFilters) {
+            // isPureScale 本身已蕴含「存在 -vf 且滤镜全是缩放类」，
+            // 不能再叠加 !hasCpuVideoFilters —— 只要出现 -vf 它必然为真，
+            // 叠加后条件恒为 false，这里就永远走 else，Vulkan 通路永远开不起来。
+            if (request.isPureScale) {
                 reasons += "已启用 Vulkan 滤镜链处理缩放（需要 FFmpeg 编译时带 --enable-vulkan）。"
             } else {
                 warnings += "当前处理链包含非缩放滤镜，Vulkan 通路无法整体接管，已回退到 CPU 滤镜。"
