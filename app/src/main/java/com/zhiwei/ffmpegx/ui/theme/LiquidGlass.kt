@@ -84,26 +84,41 @@ fun AppBackground(
 }
 
 /**
- * 基色 + 几个径向色斑。
+ * 基色 + 两个径向色斑。
  *
- * 色斑刻意做得很淡：它的唯一作用是给玻璃提供「可被模糊出层次」的像素，
+ * ## 颜色全部取自当前主题，不写死
+ *
+ * 主题默认开着「动态取色」（`dynamicColor = true`），主色会跟着壁纸走。
+ * 早先这里的色斑写死了品牌蓝 + 青绿 —— 壁纸一旦不是蓝色系，
+ * 背景色斑和界面主色就会撞在一起，整屏发浑，这正是「看着丑」的一大来源。
+ * 改成从 `colorScheme` 取 primary / secondary，就永远和界面同源。
+ *
+ * ## 基色为什么用 surfaceContainerLow
+ *
+ * 卡片用的是 `surface`，页面背景必须和它差一档，否则卡片会「融进」背景里、
+ * 看不出层次。`surfaceContainerLow` 正好比 `surface` 低一档，且在浅色/深色
+ * 下都保持这个相对关系（它由色调阶梯固定，动态取色时也一样）。
+ *
+ * ## 色斑为什么必须很淡
+ *
+ * 它的唯一作用是给玻璃提供「可被模糊出层次」的像素。
  * 太浓会喧宾夺主，把信息阅读区搅花。
  */
 @Composable
 private fun BackgroundGlow() {
     val dark = isSystemInDarkTheme()
-    val base = if (dark) Color(0xFF0B1220) else Color(0xFFF7F9FF)
-    // 品牌蓝 + 青绿，和 Theme.kt 的主色/强调色同源
-    val blue = if (dark) Color(0xFF3B6BFF) else Color(0xFF2F6BFF)
-    val teal = if (dark) Color(0xFF00A38C) else Color(0xFF00796B)
-    val blueAlpha = if (dark) 0.30f else 0.16f
-    val tealAlpha = if (dark) 0.22f else 0.12f
+    val scheme = MaterialTheme.colorScheme
+    val base = scheme.surfaceContainerLow
+    val blobA = scheme.primary
+    val blobB = scheme.secondary
+    val alphaA = if (dark) 0.34f else 0.18f
+    val alphaB = if (dark) 0.24f else 0.13f
 
     Canvas(Modifier.fillMaxSize()) {
         drawRect(base)
         drawRect(
             brush = Brush.radialGradient(
-                colors = listOf(blue.copy(alpha = blueAlpha), Color.Transparent),
+                colors = listOf(blobA.copy(alpha = alphaA), Color.Transparent),
                 center = Offset(size.width * 0.16f, size.height * 0.04f),
                 radius = size.minDimension * 1.05f,
             ),
@@ -111,7 +126,7 @@ private fun BackgroundGlow() {
         )
         drawRect(
             brush = Brush.radialGradient(
-                colors = listOf(teal.copy(alpha = tealAlpha), Color.Transparent),
+                colors = listOf(blobB.copy(alpha = alphaB), Color.Transparent),
                 center = Offset(size.width * 0.92f, size.height * 0.78f),
                 radius = size.minDimension * 0.95f,
             ),
