@@ -235,8 +235,8 @@ dependencies {
     implementation(libs.androidx.compose.material3)
     implementation(libs.androidx.compose.material.icons.extended)
     // Liquid Glass 视觉效果（Kyant0/AndroidLiquidGlass，库名 backdrop）
+    // 不引 shapes：1.0.2 不依赖它，本项目也没用到（Capsule 等）
     implementation(libs.kyant.backdrop)
-    implementation(libs.kyant.shapes)
     debugImplementation(libs.androidx.compose.ui.tooling)
 
     implementation(libs.androidx.navigation.compose)
