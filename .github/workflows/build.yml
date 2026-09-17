@@ -1,57 +1,65 @@
 name: Build
 
+# 触发规则：
+#   push 到 main    常规集成验证
+#   push tag v*     额外产出签名 APK 并创建 Release
+#   PR 到 main      合入前验证
+#   手动触发        用于重跑
+#
+# 仅改动文档时跳过整套流水线，避免占用构建配额。路径过滤对 tag 推送不生效
+# （GitHub 官方行为），因此打 tag 一定会触发发布。
+
 on:
   push:
     branches: [main]
     tags: ['v*']
+    paths-ignore:
+      - '**.md'
+      - 'docs/**'
+      - 'LICENSE'
+      - '.gitignore'
+      - '.editorconfig'
+      - '.github/dependabot.yml'
   pull_request:
     branches: [main]
+    paths-ignore:
+      - '**.md'
+      - 'docs/**'
+      - 'LICENSE'
+      - '.gitignore'
+      - '.editorconfig'
+      - '.github/dependabot.yml'
   workflow_dispatch:
 
 permissions:
   contents: write
 
-# 连续推送时只保留最后一次。
-#
-# 没有这段的话，推 N 次就是 N 个 run 同时在跑：互相抢 runner 变得更慢，
-# 结果里还要自己分辨哪个对应最终提交。cancel-in-progress 取消的是
-# 「已被更新提交取代」的旧 run —— 语义上安全，因为旧提交的结果已经没意义了。
+# 同一分支连续推送时只保留最后一次运行，避免多个 run 争抢 runner
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
 env:
-  # ffmpeg-kit-next 的版本（与 gradle/libs.versions.toml 保持一致）
+  # 与 gradle/libs.versions.toml 的 ffmpegKitNext 保持一致
   FFMPEG_KIT_NEXT_VERSION: '9.0.0'
-  # 构建 AAR 时用的 Nix profile
   FFMPEG_KIT_NEXT_NIX_PROFILE: 'android-r27d'
-  # FFmpegX 打包的 ABI（与 gradle.properties 的 ffmpegx.abis 一致）
+  # 与 gradle.properties 的 ffmpegx.abis 保持一致
   FFMPEGX_ABIS: 'arm64-v8a,armeabi-v7a,x86_64'
-  # AAR 启用的外部库清单 —— **唯一事实来源**。
-  # 缓存 key 里的库指纹、以及传给 nix-android.sh 的 --enable-* 开关，
-  # 都由它派生（见下面的 "Derive lib flags" 步骤），不手工维护第二份。
-  #
-  # 为什么必须参与缓存 key：只改构建参数而不改 key，会命中上一次的旧 AAR，
-  # 新参数永远不生效。（v1.0.5 的「Encoder not found」就是这么来的：
-  # 漏了 android-media-codec，而缓存 key 只含版本号与 ABI，参数变化不触发重建。）
-  #
-  # 改这里会同时改变缓存指纹，从而强制重建 AAR —— 这是期望行为。
-  FFMPEG_KIT_NEXT_LIBS: 'gpl x264 x265 android-media-codec lame opus libvorbis libvpx libass'
+  ANDROID_PLATFORM: 'android-36'
+  ANDROID_BUILD_TOOLS: '36.0.0'
 
 jobs:
-  # ===========================================================================
-  #  静态检查（快速闸门）
+  # =========================================================== 静态检查闸门 ====
   #
-  #  三个检查器都是纯词法/结构分析，几秒跑完，不需要 AAR、不需要 Android SDK。
-  #  放在最前面当闸门：语法、类体重复成员、@Composable 上下文、
-  #  以及封装函数的参数类型约束这四类问题在这里就拦下，
-  #  不必等几分钟的完整构建才发现一个括号写错了。
-  # ===========================================================================
+  # 四个检查器都是纯词法/结构分析，几秒完成，不需要 AAR 与 Android SDK。
+  # 放在最前面拦截语法、重复成员、@Composable 上下文、导入符号这四类问题，
+  # 不必等几分钟的完整编译才发现。
   lint:
     name: Static checks
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+
       - name: Run static checks
         run: |
           set -e
@@ -60,103 +68,35 @@ jobs:
           python3 scripts/checks/ktscan.py ${KT_FILES}
           python3 scripts/checks/dupcheck.py ${KT_FILES}
           python3 scripts/checks/composecheck.py ${KT_FILES}
+          python3 scripts/checks/importcheck.py app/src
 
-  # ===========================================================================
-  #  ffmpeg-kit-next AAR
+  # ================================================= ffmpeg-kit-next AAR ====
   #
-  #  它不发布二进制制品，必须现场构建。单独抽成一个 job 是因为 test 与 build
-  #  都依赖这个产物 —— 编译期要用到它的类型，没有 AAR 连编译都过不去。
-  #  两级缓存：Maven 产物（命中即完全跳过）+ Nix store（加速未命中时的构建）。
-  # ===========================================================================
-  ffmpeg-kit-next:
+  # ffmpeg-kit-next 不发布二进制制品，必须现场构建。单独成 job 是因为 test 与
+  # build 在编译期都要用到它的类型，没有 AAR 连编译都过不去。
+  aar:
     name: Build ffmpeg-kit-next AAR
     runs-on: ubuntu-latest
     steps:
-      # 这个 job 原本不需要仓库内容（它自己去 clone 上游到 ${GITHUB_WORKSPACE}/src），
-      # 所以一直没有 checkout。但 "Derive lib flags" 要读
-      # scripts/build-ffmpeg-kit-next.sh 做库清单一致性断言 —— 没有 checkout 的话
-      # grep 会以「文件不存在」返回 2，配合 set -euo pipefail 直接让 job 挂掉。
-      #
-      # ⚠️ 必须放在 Cache AAR **之前**：actions/checkout 默认会先跑
-      # `git clean -ffdx`，如果排在缓存恢复之后，会把刚恢复出来的 prebuilt/ 删掉。
+      # 必须排在缓存恢复之前：actions/checkout 默认执行 git clean -ffdx，
+      # 若在缓存之后运行会把刚恢复出来的 prebuilt/ 删掉。
       - uses: actions/checkout@v4
 
-      # 缓存 key 里不能出现逗号：actions/cache 会直接报
-      # "Key Validation Error: ... cannot contain commas" 并让整个 job 失败。
-      # 所以这里先把 ABI 列表转成无逗号的形式。
-      - name: Normalize ABI list
+      - name: Resolve ABI slug
         id: abis
-        shell: bash
-        run: |
-          SLUG="$(echo "${FFMPEGX_ABIS}" | tr -d ' ' | tr ',' '_')"
-          echo "slug=${SLUG}" >> "$GITHUB_OUTPUT"
-          echo "缓存键里的 ABI 片段 = ${SLUG}"
+        run: echo "slug=$(echo "${FFMPEGX_ABIS}" | tr -d ' ' | tr ',' '_')" >> "$GITHUB_OUTPUT"
 
-      # 库清单是唯一事实来源：缓存指纹与构建开关都从这里派生。
-      # 手工各写一份的话，漏改一处就会命中旧 AAR、库静默缺失 ——
-      # 正是 v1.0.5 那个 "Encoder not found" 的同类问题。
-      - name: Derive lib flags
-        id: libs
-        shell: bash
-        run: |
-          set -euo pipefail
-          LIBS="${FFMPEG_KIT_NEXT_LIBS}"
-          [ -n "${LIBS}" ] || { echo "::error::FFMPEG_KIT_NEXT_LIBS 为空"; exit 1; }
-
-          # 指纹：去掉 lib 前缀，android-media-codec 缩成 mc，空格换连字符。
-          # 不能含逗号 —— actions/cache 的 key 遇到逗号会直接失败。
-          SLUG="$(echo "${LIBS}" | tr ' ' '\n' \
-            | sed -e 's/^lib//' -e 's/^android-media-codec$/mc/' \
-            | paste -sd- -)"
-
-          FLAGS=""
-          for lib in ${LIBS}; do
-            if [ "${lib}" = "gpl" ]; then
-              FLAGS="${FLAGS} --enable-gpl"
-            else
-              FLAGS="${FLAGS} --enable-lib-${lib}"
-            fi
-          done
-          FLAGS="${FLAGS# }"
-          [ -n "${FLAGS}" ] || { echo "::error::派生出的 --enable 开关为空"; exit 1; }
-
-          echo "slug=${SLUG}" >> "$GITHUB_OUTPUT"
-          echo "flags=${FLAGS}" >> "$GITHUB_OUTPUT"
-          echo "库指纹   = ${SLUG}"
-          echo "构建开关 = ${FLAGS}"
-
-          # 库清单在 scripts/build-ffmpeg-kit-next.sh 里还有一份（README 与 docs
-          # 记载的本地手动构建入口，CI 不走它）。两份独立维护，就有悄悄漂移的风险 ——
-          # 而漂移的后果是「CI 编出的 AAR 和本地编出的不一样」，极难排查。
-          # 这里断言两者一致：不一致就立刻 fail，逼着改的人同步。
-          SCRIPT_DEFAULT="$(grep -m1 '^DEFAULT_LIBS="' scripts/build-ffmpeg-kit-next.sh \
-            | sed 's/^DEFAULT_LIBS="//; s/"$//')"
-          if [ -z "${SCRIPT_DEFAULT}" ]; then
-            echo "::error::读不到 scripts/build-ffmpeg-kit-next.sh 里的 DEFAULT_LIBS"
-            exit 1
-          fi
-          # 脚本在启用 GPL 时会前置 x264 x265，按同样规则拼出它的完整清单
-          EXPECTED_LIBS="$(echo "gpl x264 x265 ${SCRIPT_DEFAULT}" | tr ' ' '\n' | sort | tr '\n' ' ')"
-          ACTUAL_LIBS="$(echo "${LIBS}" | tr ' ' '\n' | sort | tr '\n' ' ')"
-          if [ "${EXPECTED_LIBS}" != "${ACTUAL_LIBS}" ]; then
-            echo "::error::库清单不一致：CI 的 FFMPEG_KIT_NEXT_LIBS 与 scripts/build-ffmpeg-kit-next.sh 的 DEFAULT_LIBS 必须同步"
-            echo "  CI   : ${ACTUAL_LIBS}"
-            echo "  脚本 : ${EXPECTED_LIBS}"
-            exit 1
-          fi
-          echo "库清单与本地构建脚本一致"
-
+      # 缓存 key 含库清单指纹：改清单会强制重建，避免命中参数不同的旧 AAR
       - name: Cache AAR
-        id: aar-cache
+        id: cache
         uses: actions/cache@v4
         with:
           path: ${{ github.workspace }}/prebuilt
-          # restore-keys 的前缀也必须带上库指纹，否则仍会回退命中参数不同的旧 AAR
-          key: ffmpegkitnext-${{ env.FFMPEG_KIT_NEXT_VERSION }}-${{ steps.abis.outputs.slug }}-${{ steps.libs.outputs.slug }}-${{ runner.os }}
-          restore-keys: ffmpegkitnext-${{ env.FFMPEG_KIT_NEXT_VERSION }}-${{ steps.libs.outputs.slug }}-
+          key: aar-${{ env.FFMPEG_KIT_NEXT_VERSION }}-${{ steps.abis.outputs.slug }}-${{ hashFiles('scripts/ffmpeg-kit-next-libs.txt') }}-${{ runner.os }}
+          restore-keys: aar-${{ env.FFMPEG_KIT_NEXT_VERSION }}-${{ steps.abis.outputs.slug }}-
 
       - name: Install Nix
-        if: steps.aar-cache.outputs.cache-hit != 'true'
+        if: steps.cache.outputs.cache-hit != 'true'
         uses: cachix/install-nix-action@v30
         with:
           nix_path: nixpkgs=channel:nixos-unstable
@@ -165,149 +105,72 @@ jobs:
             access-tokens = github.com=${{ secrets.GITHUB_TOKEN }}
 
       - name: Cache Nix store
-        if: steps.aar-cache.outputs.cache-hit != 'true'
+        if: steps.cache.outputs.cache-hit != 'true'
         uses: actions/cache@v4
         with:
           path: /nix/store
-          key: nix-store-${{ env.FFMPEG_KIT_NEXT_NIX_PROFILE }}-${{ runner.os }}
+          key: nix-${{ env.FFMPEG_KIT_NEXT_NIX_PROFILE }}-${{ runner.os }}
 
-      - name: Clone ffmpeg-kit-next
-        if: steps.aar-cache.outputs.cache-hit != 'true'
-        run: |
-          git clone --depth 1 https://github.com/arthenica/ffmpeg-kit-next.git \
-            "${GITHUB_WORKSPACE}/src"
-
-      # 由 FFMPEGX_ABIS 推导 --disable-arch-*：
-      # 上游支持的 Android 架构名是 arm-v7a / arm-v7a-neon / arm64-v8a / x86 / x86_64，
-      # 而 FFMPEGX_ABIS 用的是 Android 侧的名字（armeabi-v7a）。写死反而容易与
-      # gradle.properties 的 ffmpegx.abis 脱节，所以在这里算出来。
+      # 架构裁剪与外部库开关都由项目脚本处理，CI 不重复实现这套逻辑。
       - name: Build AAR
-        if: steps.aar-cache.outputs.cache-hit != 'true'
-        working-directory: ${{ github.workspace }}/src
-        shell: bash
+        if: steps.cache.outputs.cache-hit != 'true'
         run: |
-          # Android ABI -> 上游架构名
-          UPSTREAM_ARCHS=""
-          IFS=',' read -ra WANTED <<< "${FFMPEGX_ABIS}"
-          for abi in "${WANTED[@]}"; do
-            abi="$(echo "$abi" | xargs)"
-            case "$abi" in
-              arm64-v8a)    UPSTREAM_ARCHS="${UPSTREAM_ARCHS} arm64-v8a" ;;
-              armeabi-v7a)  UPSTREAM_ARCHS="${UPSTREAM_ARCHS} arm-v7a" ;;
-              x86)          UPSTREAM_ARCHS="${UPSTREAM_ARCHS} x86" ;;
-              x86_64)       UPSTREAM_ARCHS="${UPSTREAM_ARCHS} x86_64" ;;
-              *)            echo "::error::不支持的 ABI：$abi"; exit 1 ;;
-            esac
-          done
-          echo "上游架构名：${UPSTREAM_ARCHS}"
+          set -e
+          git clone --depth 1 https://github.com/arthenica/ffmpeg-kit-next.git ../ffmpeg-kit-next
+          ./scripts/build-ffmpeg-kit-next.sh --abis "${FFMPEGX_ABIS}"
+          mkdir -p prebuilt
+          cp -r ../ffmpeg-kit-next/prebuilt/bundle-android-aar-24-maven/. prebuilt/
 
-          DISABLE=()
-          for arch in arm-v7a arm-v7a-neon arm64-v8a x86 x86_64; do
-            KEEP=no
-            for want in ${UPSTREAM_ARCHS}; do
-              [ "$arch" = "$want" ] && KEEP=yes && break
-            done
-            [ "$KEEP" = no ] && DISABLE+=("--disable-arch-${arch}")
-          done
-          echo "跳过的架构：${DISABLE[*]:-无}"
-
-          # 库清单见 env 的 FFMPEG_KIT_NEXT_LIBS（唯一事实来源），
-          # 也必须与 scripts/build-ffmpeg-kit-next.sh 以及 App 声明的能力一致。
-          # 每一项都对应 App 里真实会生成的编码器参数，少一个就有功能在真机上失败：
-          #
-          #   --enable-gpl                        GPL 变体，x264/x265 的前提
-          #   --enable-lib-x264 / -x265           H.264 / HEVC 软件编码（「兼容优先」策略）
-          #   --enable-lib-android-media-codec    ★ MediaCodec 硬编硬解。
-          #       上游默认是 no！不开的话 h264_mediacodec / hevc_mediacodec 在
-          #       libavcodec 里根本不存在，而 App 会依据设备 MediaCodec 能力生成
-          #       `-c:v h264_mediacodec` —— 于是每个转码任务都秒退：
-          #       "Error opening output files: Encoder not found"
-          #   --enable-lib-lame                   MP3（libmp3lame）
-          #   --enable-lib-opus                   Opus（libopus）
-          #   --enable-lib-libvorbis              Vorbis（libvorbis）
-          #   --enable-lib-libvpx                 VP8/VP9（libvpx-vp9）
-          #   --enable-lib-libass                 字幕烧录（subtitles 滤镜）
-          # 开关不在这里手写 —— 由 env 的 FFMPEG_KIT_NEXT_LIBS 派生（见
-          # "Derive lib flags" 步骤），与缓存指纹同源，杜绝「改了参数但
-          # 缓存没失效、库静默缺失」。
-          # shellcheck disable=SC2086  # 这里就是要按空格拆成多个参数
-          ./nix-android.sh \
-            -p "${FFMPEG_KIT_NEXT_NIX_PROFILE}" \
-            --api-level=24 \
-            "${DISABLE[@]}" \
-            ${{ steps.libs.outputs.flags }}
-
-          # 归拢到一个稳定路径，方便缓存与下游 job 引用
-          mkdir -p "${GITHUB_WORKSPACE}/prebuilt"
-          cp -r prebuilt/bundle-android-aar-24-maven/. "${GITHUB_WORKSPACE}/prebuilt/"
-
+      # --enable 开关只是「请求」：ffmpeg-kit-next 对无法识别的选项静默忽略，
+      # 因此构建成功并不能证明库真的编进去了。唯一可靠的信号是把产物拆开逐项核对。
+      # 编码器符号从库清单派生，两者同源；滤镜清单对应 Commands.kt 实际生成的滤镜。
       - name: Verify AAR
-        shell: bash
         run: |
-          AAR="$(find "${GITHUB_WORKSPACE}/prebuilt" -name '*.aar' | head -1)"
-          if [ -z "${AAR}" ]; then
-            echo "::error::没有产出 AAR"
-            exit 1
-          fi
+          set -e
+          AAR="$(find prebuilt -name '*.aar' | head -1)"
+          [ -n "${AAR}" ] || { echo "::error::没有产出 AAR"; exit 1; }
           ls -lh "${AAR}"
 
-          echo "--- AAR 内包含的 ABI ---"
-          # AAR 的 jni 目录按 jni/<abi>/ 存放，把它列出来核对
-          unzip -l "${AAR}" | awk '$4 ~ /^jni\// { split($4, p, "/"); print p[2] }' | sort -u | tee /tmp/aar-abis.txt
+          echo "--- AAR 内的 ABI ---"
+          unzip -l "${AAR}" | awk '$4 ~ /^jni\// { split($4, p, "/"); print p[2] }' | sort -u
 
-          # 硬校验：编码器必须真的躺在 libavcodec.so 里。
-          #
-          # 上面那一串 --enable-lib-* 只是「请求」——构建脚本对不认识的选项是
-          # **静默忽略**的（不报错、不退出），所以「构建成功」根本不能证明库编进去了。
-          # 唯一可靠的信号是把产物拆开、从二进制里把编码器名抠出来。
-          #
-          # v1.0.5 就是栽在这里：漏了 --enable-lib-android-media-codec，
-          # 构建一路绿灯，装到机器上每个转码任务都 "Encoder not found"。
-          echo "--- 校验关键编码器（缺失即 fail）---"
+          ENCODERS=""
+          while IFS= read -r raw || [ -n "${raw}" ]; do
+            raw="${raw%%#*}"
+            raw="$(echo "${raw}" | xargs)"
+            [ -n "${raw}" ] || continue
+            [ "${raw%%=*}" = "gpl" ] && continue
+            case "${raw}" in
+              *=*) syms="${raw#*=}" ;;
+              *)   syms="" ;;
+            esac
+            for s in $(echo "${syms}" | tr ',' ' '); do
+              ENCODERS="${ENCODERS} ${s}"
+            done
+          done < scripts/ffmpeg-kit-next-libs.txt
+
           SO="$(unzip -l "${AAR}" | awk '/libavcodec\.so/ { print $4 }' | head -1)"
-          if [ -z "${SO}" ]; then
-            echo "::error::AAR 里找不到 libavcodec.so"
-            exit 1
-          fi
+          [ -n "${SO}" ] || { echo "::error::AAR 里找不到 libavcodec.so"; exit 1; }
           unzip -p "${AAR}" "${SO}" > /tmp/libavcodec.so
-          ls -lh /tmp/libavcodec.so
 
+          echo "--- 校验编码器 ---"
           MISSING=0
-          # 清单要与 env 的 FFMPEG_KIT_NEXT_LIBS 一一对应（gpl 本身没有符号可查）。
-          # 注意 grep 的是**编码器名**，与库名不完全同形：
-          #   android-media-codec -> h264_mediacodec / hevc_mediacodec
-          #   lame                -> libmp3lame
-          #   libvorbis           -> libvorbis
-          # flac / aac / pcm_s16le 是 FFmpeg 内建，不需要外部库，故不列。
-          for enc in libx264 libx265 h264_mediacodec hevc_mediacodec libmp3lame libopus libvorbis libvpx libass; do
+          for enc in ${ENCODERS}; do
             if grep -aq "${enc}" /tmp/libavcodec.so; then
               echo "  [OK]   ${enc}"
             else
-              echo "::error::libavcodec.so 缺少 ${enc} —— 构建参数可能被静默忽略，或该库构建失败"
+              echo "::error::libavcodec.so 缺少 ${enc}（--enable 开关可能被静默忽略）"
               MISSING=1
             fi
           done
-          if [ "${MISSING}" -ne 0 ]; then
-            echo "::error::AAR 缺少必需编码器，拒绝继续（装上去必然报 Encoder not found）"
-            exit 1
-          fi
-          echo "全部关键编码器就位"
+          [ "${MISSING}" -eq 0 ] || { echo "::error::AAR 缺少必需编码器，拒绝继续"; exit 1; }
 
-          # 滤镜同样要硬校验，理由和编码器一致：构建脚本对不认识的选项是
-          # 静默忽略的，而滤镜缺失的表现是运行时报 "No such filter"。
-          # 清单要与 Commands.kt 里真实生成的滤镜对应，改那边就要改这里。
-          #
-          # 匹配方式：.so 的字符串表里滤镜名是 NUL 结尾的，所以先把 NUL 换成
-          # 换行，再用 grep -qxF 做整行精确匹配 —— 直接 grep 子串会误判
-          # （例如 "split" 会命中 "splitxyz"）。
-          echo "--- 校验关键滤镜（缺失即 fail）---"
+          # .so 的字符串表以 NUL 结尾，先换成换行再做整行精确匹配，
+          # 否则 "split" 会误命中 "splitxyz"。
+          echo "--- 校验滤镜 ---"
           FILTER_SO="$(unzip -l "${AAR}" | awk '/libavfilter\.so/ { print $4 }' | head -1)"
-          if [ -z "${FILTER_SO}" ]; then
-            echo "::error::AAR 里找不到 libavfilter.so"
-            exit 1
-          fi
+          [ -n "${FILTER_SO}" ] || { echo "::error::AAR 里找不到 libavfilter.so"; exit 1; }
           unzip -p "${AAR}" "${FILTER_SO}" > /tmp/libavfilter.so
-          ls -lh /tmp/libavfilter.so
           tr '\0' '\n' < /tmp/libavfilter.so > /tmp/filter-names.txt
 
           MISSING_FILTER=0
@@ -320,51 +183,38 @@ jobs:
             if grep -qxF "${flt}" /tmp/filter-names.txt; then
               echo "  [OK]   ${flt}"
             else
-              echo "::error::libavfilter.so 缺少滤镜 ${flt} —— 对应功能会报 No such filter"
+              echo "::error::libavfilter.so 缺少滤镜 ${flt}（对应功能会报 No such filter）"
               MISSING_FILTER=1
             fi
           done
-          if [ "${MISSING_FILTER}" -ne 0 ]; then
-            echo "::error::AAR 缺少必需滤镜，拒绝继续"
-            exit 1
-          fi
-          echo "全部关键滤镜就位"
+          [ "${MISSING_FILTER}" -eq 0 ] || { echo "::error::AAR 缺少必需滤镜，拒绝继续"; exit 1; }
 
       - name: Upload AAR repository
         uses: actions/upload-artifact@v4
         with:
           name: ffmpeg-kit-next-maven
           path: ${{ github.workspace }}/prebuilt
-          # AAR 只在本次 run 的两个下游 job 用，3 天足够，也不占长期配额
+          # 仅本次 run 的下游 job 使用，3 天足够
           retention-days: 3
           if-no-files-found: error
 
-  # ===========================================================================
-  #  单元测试
-  #
-  #  命令生成（Commands）与硬件加速规划（HardwarePlanner）都是纯逻辑，
-  #  但编译期仍然要解析 ffmpeg-kit-next 的类型，所以依赖上面的 AAR。
-  # ===========================================================================
+  # =============================================================== 单元测试 ====
   test:
     name: Unit tests
     runs-on: ubuntu-latest
-    # 静态检查不过就不必浪费几分钟去编译
-    needs: [ffmpeg-kit-next, lint]
+    needs: [lint, aar]
     steps:
       - uses: actions/checkout@v4
 
-      # gradlew 在 Git 里以 100644（普通文件）入库时会缺少可执行位，
-      # Linux runner 上直接 "Permission denied"（exit 126）。
-      # .gitattributes 已声明 executable，但历史提交里没有该位，
-      # 所以这里显式补一次，保证不依赖仓库状态。
+      # gradlew 在 Git 里以 100644 入库（历史提交缺少可执行位），Linux 上会
+      # Permission denied（exit 126），这里显式补一次。
       - name: Make gradlew executable
         run: chmod +x ./gradlew
 
-      - name: Set up JDK 21
-        uses: actions/setup-java@v4
+      - uses: ./.github/actions/setup-android-sdk
         with:
-          distribution: temurin
-          java-version: '21'
+          platform: ${{ env.ANDROID_PLATFORM }}
+          build-tools: ${{ env.ANDROID_BUILD_TOOLS }}
 
       - name: Download AAR
         uses: actions/download-artifact@v4
@@ -372,33 +222,14 @@ jobs:
           name: ffmpeg-kit-next-maven
           path: ${{ github.workspace }}/kit-next-repo
 
-      - name: Set up Android SDK
-        run: |
-          SDK_ROOT="${ANDROID_SDK_ROOT:-/usr/local/lib/android/sdk}"
-          echo "ANDROID_SDK_ROOT=${SDK_ROOT}" >> "$GITHUB_ENV"
-          echo "ANDROID_HOME=${SDK_ROOT}" >> "$GITHUB_ENV"
-          mkdir -p "${SDK_ROOT}/cmdline-tools"
-          if [ ! -d "${SDK_ROOT}/cmdline-tools/latest" ]; then
-            curl -fsSL -o /tmp/cmdline-tools.zip \
-              https://dl.google.com/android/repository/commandlinetools-linux-11076708_latest.zip
-            unzip -q /tmp/cmdline-tools.zip -d /tmp/cmdline-tools
-            mv /tmp/cmdline-tools/cmdline-tools "${SDK_ROOT}/cmdline-tools/latest"
-          fi
-          echo "${SDK_ROOT}/cmdline-tools/latest/bin" >> "$GITHUB_PATH"
-
-      - name: Install SDK packages
-        run: |
-          yes | sdkmanager --licenses > /dev/null 2>&1 || true
-          sdkmanager "platforms;android-36" "build-tools;36.0.0" > /dev/null
-
       - name: Cache Gradle
         uses: actions/cache@v4
         with:
           path: |
             ~/.gradle/caches
             ~/.gradle/wrapper
-          key: gradle-test-${{ runner.os }}-${{ hashFiles('**/*.gradle.kts', 'gradle/libs.versions.toml') }}
-          restore-keys: gradle-test-${{ runner.os }}-
+          key: gradle-${{ runner.os }}-${{ hashFiles('**/*.gradle.kts', 'gradle/libs.versions.toml') }}
+          restore-keys: gradle-${{ runner.os }}-
 
       - name: Run unit tests
         env:
@@ -414,30 +245,25 @@ jobs:
           retention-days: 7
           if-no-files-found: ignore
 
-  # ===========================================================================
-  #  构建 APK
-  # ===========================================================================
+  # =============================================================== 打包 APK ====
+  #
+  # 刻意不依赖 test：两者都只需要 AAR 与 lint，可以并行，总时长由较慢的那个决定。
+  # 测试失败时整个 run 仍然是红的 —— release 同时依赖 test，不会出现
+  # 「测试挂了但照样发布」。
   build:
     name: Build APKs
     runs-on: ubuntu-latest
-    # 刻意**不依赖 test**：两者都只依赖 AAR 与 lint，于是能并行跑。
-    # 早先是串行（build 依赖 test），一次要等 5~6 分钟；
-    # 并行后总时长由较慢的那个决定，约 3.5 分钟。
-    # 测试失败时整个 run 仍然是红的 —— release 同时依赖 test（见下），
-    # 所以不会出现「测试挂了但照样发布」。
-    needs: [ffmpeg-kit-next, lint]
+    needs: [lint, aar]
     steps:
       - uses: actions/checkout@v4
 
-      # 同 test job：历史提交里 gradlew 没有可执行位，显式补上
       - name: Make gradlew executable
         run: chmod +x ./gradlew
 
-      - name: Set up JDK 21
-        uses: actions/setup-java@v4
+      - uses: ./.github/actions/setup-android-sdk
         with:
-          distribution: temurin
-          java-version: '21'
+          platform: ${{ env.ANDROID_PLATFORM }}
+          build-tools: ${{ env.ANDROID_BUILD_TOOLS }}
 
       - name: Download AAR
         uses: actions/download-artifact@v4
@@ -445,64 +271,36 @@ jobs:
           name: ffmpeg-kit-next-maven
           path: ${{ github.workspace }}/kit-next-repo
 
-      - name: Set up Android SDK
-        run: |
-          SDK_ROOT="${ANDROID_SDK_ROOT:-/usr/local/lib/android/sdk}"
-          echo "ANDROID_SDK_ROOT=${SDK_ROOT}" >> "$GITHUB_ENV"
-          echo "ANDROID_HOME=${SDK_ROOT}" >> "$GITHUB_ENV"
-          mkdir -p "${SDK_ROOT}/cmdline-tools"
-          if [ ! -d "${SDK_ROOT}/cmdline-tools/latest" ]; then
-            curl -fsSL -o /tmp/cmdline-tools.zip \
-              https://dl.google.com/android/repository/commandlinetools-linux-11076708_latest.zip
-            unzip -q /tmp/cmdline-tools.zip -d /tmp/cmdline-tools
-            mv /tmp/cmdline-tools/cmdline-tools "${SDK_ROOT}/cmdline-tools/latest"
-          fi
-          echo "${SDK_ROOT}/cmdline-tools/latest/bin" >> "$GITHUB_PATH"
-
-      - name: Install SDK packages
-        run: |
-          yes | sdkmanager --licenses > /dev/null 2>&1 || true
-          sdkmanager "platforms;android-36" "build-tools;36.0.0" > /dev/null
-
       - name: Cache Gradle
         uses: actions/cache@v4
         with:
           path: |
             ~/.gradle/caches
             ~/.gradle/wrapper
-          key: gradle-build-${{ runner.os }}-${{ hashFiles('**/*.gradle.kts', 'gradle/libs.versions.toml') }}
-          restore-keys: gradle-build-${{ runner.os }}-
+          key: gradle-${{ runner.os }}-${{ hashFiles('**/*.gradle.kts', 'gradle/libs.versions.toml') }}
+          restore-keys: gradle-${{ runner.os }}-
 
-      # tag 形如 v1.0.3 -> 1.0.3，传给 Gradle 作为 versionName。
-      # 非 tag 触发（main / PR）时留空，Gradle 用自己的默认值。
+      # tag 形如 v1.0.3 -> 1.0.3，作为 versionName 传给 Gradle。
+      # 非 tag 触发时留空，Gradle 使用自己的默认值。
       - name: Resolve version
         id: version
-        shell: bash
         run: |
           if [[ "${GITHUB_REF}" == refs/tags/v* ]]; then
-            VERSION="${GITHUB_REF_NAME#v}"
+            echo "name=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
           else
-            VERSION=""
+            echo "name=" >> "$GITHUB_OUTPUT"
           fi
-          echo "name=${VERSION}" >> "$GITHUB_OUTPUT"
-          echo "versionName = ${VERSION:-（未指定，用 Gradle 默认值）}"
 
       - name: Restore release keystore
         if: startsWith(github.ref, 'refs/tags/v')
         env:
           KEYSTORE_BASE64: ${{ secrets.RELEASE_KEYSTORE_BASE64 }}
         run: |
-          if [ -z "${KEYSTORE_BASE64}" ]; then
-            echo "::error::未配置 RELEASE_KEYSTORE_BASE64，无法产出签名包"
-            exit 1
-          fi
+          set -e
+          [ -n "${KEYSTORE_BASE64}" ] || { echo "::error::未配置 RELEASE_KEYSTORE_BASE64"; exit 1; }
           echo "${KEYSTORE_BASE64}" | base64 -d > "${GITHUB_WORKSPACE}/release.jks"
-          if [ ! -s "${GITHUB_WORKSPACE}/release.jks" ]; then
-            echo "::error::release.jks 解码后为空，RELEASE_KEYSTORE_BASE64 可能不是合法的 base64"
-            exit 1
-          fi
+          [ -s "${GITHUB_WORKSPACE}/release.jks" ] || { echo "::error::release.jks 解码后为空"; exit 1; }
           echo "RELEASE_STORE_FILE=${GITHUB_WORKSPACE}/release.jks" >> "$GITHUB_ENV"
-          echo "已恢复签名密钥（$(stat -c%s "${GITHUB_WORKSPACE}/release.jks") 字节）"
 
       - name: Build debug APKs
         env:
@@ -519,59 +317,43 @@ jobs:
           RELEASE_KEY_PASSWORD: ${{ secrets.RELEASE_KEY_PASSWORD }}
         run: ./gradlew assembleRelease --no-daemon --stacktrace
 
-      # Release 包必须真的签名了 —— 没签名的话 Gradle 会静默产出
-      # app-*-release-unsigned.apk，装不上，而且要到用户手里才被发现。
+      # 签名配置失效时 Gradle 会静默产出 *-release-unsigned.apk，装不上，
+      # 且要到用户手里才会被发现，因此这里强制校验。
       - name: Verify APK signatures
         if: startsWith(github.ref, 'refs/tags/v')
-        shell: bash
         run: |
           set -e
           SIGNED="$(find app/build/outputs/apk/release -name '*-release.apk' 2>/dev/null | wc -l)"
           UNSIGNED="$(find app/build/outputs/apk/release -name '*unsigned*.apk' 2>/dev/null | wc -l)"
           echo "已签名 APK: ${SIGNED} 个；未签名 APK: ${UNSIGNED} 个"
-          find app/build/outputs/apk/release -name '*.apk' -exec ls -lh {} \;
-          if [ "${SIGNED}" -eq 0 ]; then
-            echo "::error::没有产出已签名的 release APK（签名配置未生效）"
-            exit 1
-          fi
-          if [ "${UNSIGNED}" -gt 0 ]; then
-            echo "::error::存在未签名 APK，签名密钥未正确应用"
-            exit 1
-          fi
-          # 用 apksigner 复核第一份产物，确认 v2/v3 签名真的在
+          [ "${SIGNED}" -gt 0 ] || { echo "::error::没有产出已签名的 release APK"; exit 1; }
+          [ "${UNSIGNED}" -eq 0 ] || { echo "::error::存在未签名 APK，签名配置未生效"; exit 1; }
           APKSIGNER="$(find "${ANDROID_SDK_ROOT}/build-tools" -name apksigner | sort -V | tail -1)"
-          FIRST="$(find app/build/outputs/apk/release -name '*-release.apk' | head -1)"
-          "${APKSIGNER}" verify --print-certs "${FIRST}"
+          "${APKSIGNER}" verify --print-certs "$(find app/build/outputs/apk/release -name '*-release.apk' | head -1)"
 
-      # 注意：不能简单地 find 全部 *.apk 然后平铺到 artifacts/。
-      # release 与 debug 包名只差最后一段（app-arm64-v8a-release.apk /
-      # app-arm64-v8a-debug.apk），平铺后两个目录都会被塞进来，发布时就会
-      # 把 debug 包也传上去。这里按构建类型分目录存放。
+      # release 与 debug 包名只差最后一段，平铺到同一目录会把 debug 包一起带上，
+      # 因此按构建类型分目录存放，发布时只取 release/。
       - name: Collect APKs
         run: |
           set -e
           mkdir -p artifacts/release artifacts/debug
           find app/build/outputs/apk/release -name '*.apk' -exec cp {} artifacts/release/ \;
           find app/build/outputs/apk/debug -name '*.apk' -exec cp {} artifacts/debug/ \;
-          echo "--- release ---"; ls -lh artifacts/release/
-          echo "--- debug ---";   ls -lh artifacts/debug/
+          ls -lh artifacts/release/ artifacts/debug/
 
       - name: Upload APKs
         uses: actions/upload-artifact@v4
         with:
           name: ffmpegx-apks
-          # 保留 release/ 与 debug/ 的层级，发布 job 才能只取 release/
           path: artifacts/**/*.apk
           retention-days: 7
           if-no-files-found: error
 
-  # ===========================================================================
-  #  发布（仅 v* tag）
-  # ===========================================================================
+  # =========================================================== 发布（仅 tag）====
   release:
     name: Publish release
     runs-on: ubuntu-latest
-    # 必须同时等 test：build 已经与 test 并行了，只依赖 build 的话
+    # 必须同时等 test：build 与 test 并行，只依赖 build 的话
     # 「测试失败但打包成功」也会被发布出去。
     needs: [test, build]
     if: startsWith(github.ref, 'refs/tags/v')
@@ -582,10 +364,8 @@ jobs:
           name: ffmpegx-apks
           path: apks
 
-      # 只发布 release 包。debug 包虽然也在 artifact 里（便于排查），
-      # 但绝不能进 Release 附件 —— 它是 debug 签名的，装不上正式包覆盖。
+      # debug 包虽在 artifact 里（便于排查），但绝不能进 Release 附件
       - name: Select release APKs only
-        shell: bash
         run: |
           set -e
           if [ -d apks/release ]; then
@@ -594,33 +374,27 @@ jobs:
           fi
           COUNT="$(find apks -maxdepth 1 -name '*.apk' | wc -l)"
           echo "待发布的 release APK：${COUNT} 个"
-          if [ "${COUNT}" -eq 0 ]; then
-            echo "::error::没有找到可发布的 release APK"
-            exit 1
-          fi
+          [ "${COUNT}" -gt 0 ] || { echo "::error::没有找到可发布的 release APK"; exit 1; }
           if find apks -maxdepth 1 -name '*-debug.apk' | grep -q .; then
             echo "::error::发布目录里混入了 debug 包"
             exit 1
           fi
           ls -lh apks/
 
-      # 命名沿用 v1.0.0 / v1.0.1 的既有格式，便于对照升级：
-      #   ffmpegx-v1.0.3-arm64-v8a-release.apk
+      # 命名沿用 ffmpegx-v1.0.3-arm64-v8a-release.apk，便于对照升级
       - name: Rename with version
-        shell: bash
         run: |
           set -e
           VERSION="${GITHUB_REF_NAME#v}"
           cd apks
           for f in *.apk; do
-            # app-arm64-v8a-release.apk -> ffmpegx-v1.0.3-arm64-v8a-release.apk
-            ABIVAR="$(echo "$f" | sed -E 's/^app-(.+)-(debug|release)\.apk$/\1/')"
-            BUILDVAR="$(echo "$f" | sed -E 's/^app-.+-(debug|release)\.apk$/\1/')"
-            if [ "$ABIVAR" = "$f" ] || [ "$BUILDVAR" = "$f" ]; then
+            ABI="$(echo "$f" | sed -E 's/^app-(.+)-(debug|release)\.apk$/\1/')"
+            VARIANT="$(echo "$f" | sed -E 's/^app-.+-(debug|release)\.apk$/\1/')"
+            if [ "$ABI" = "$f" ] || [ "$VARIANT" = "$f" ]; then
               echo "::error::无法从文件名解析 ABI 与构建类型：$f"
               exit 1
             fi
-            mv "$f" "ffmpegx-v${VERSION}-${ABIVAR}-${BUILDVAR}.apk"
+            mv "$f" "ffmpegx-v${VERSION}-${ABI}-${VARIANT}.apk"
           done
           ls -lh
 
