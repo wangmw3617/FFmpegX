@@ -125,6 +125,20 @@ object FFmpegNative {
         return b.probeJson(path)
     }
 
+    /**
+     * 列出当前 FFmpeg 构建实际包含的编码器。
+     *
+     * 后端不可用或不支持自省时返回空集 —— 调用方应把空集解释为
+     * 「未知，不做限制」，而不是「一个编码器都没有」。
+     */
+    suspend fun listEncoders(): Set<String> {
+        val b = current() ?: return emptySet()
+        if (!ensureLoaded()) return emptySet()
+        return runCatching { b.listEncoders() }
+            .onFailure { Log.w(TAG, "listEncoders 失败：${it.message}") }
+            .getOrDefault(emptySet())
+    }
+
     /** 请求取消当前会话 */
     fun cancel() {
         runCatching { current()?.cancel() }
