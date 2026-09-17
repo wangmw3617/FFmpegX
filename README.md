@@ -64,13 +64,13 @@ Windows 上可双击 `build-apk.cmd`。构建同样可以完全交给 GitHub Act
 
 ## 输出位置
 
-转码结果默认写入应用私有外部目录，不需要任何存储权限：
+转码完成后结果**自动导出到系统下载目录**，不需要任何存储权限（Android 10+ 使用 Scoped Storage）：
 
 ```
-Android/data/com.zhiwei.ffmpegx/files/Movies/FFmpegX/
+Download/FFmpegX/
 ```
 
-需要出现在相册 / 音乐 / 文件管理器里时，用结果卡片上的「导出到媒体库」，会复制一份到对应的系统目录（`Movies/FFmpegX`、`Music/FFmpegX` 等）。输出目录也可在设置中指定。
+同时保留一份副本在应用私有目录，供 App 内预览与重试。卸载 App 时私有目录会被系统清理；`Download/FFmpegX` 下的文件保留。输出目录也可在设置中指定。
 
 ## 已知限制
 
@@ -100,37 +100,6 @@ app/src/main/java/com/zhiwei/ffmpegx/
 scripts/         构建脚本
 docs/            构建与迁移文档
 ```
-
-## 发布签名
-
-发布包使用标准的 Android 签名流程。密钥与口令不入库：本地放在根目录的 `keystore.properties`（已 gitignore），CI 从 GitHub Secrets 注入。
-
-```bash
-keytool -genkeypair -v -keystore release.keystore \
-  -alias ffmpegx -keyalg RSA -keysize 4096 -validity 10000
-```
-
-本地构建时在根目录新建 `keystore.properties`：
-
-```properties
-storeFile=release.keystore
-storePassword=你的口令
-keyAlias=ffmpegx
-keyPassword=你的口令
-```
-
-CI 则在仓库 Settings → Secrets and variables → Actions 中添加：
-
-| Secret | 内容 |
-|---|---|
-| `RELEASE_KEYSTORE_BASE64` | `base64 -w0 release.keystore` 的输出 |
-| `RELEASE_STORE_PASSWORD` | 密钥库口令 |
-| `RELEASE_KEY_ALIAS` | 密钥别名 |
-| `RELEASE_KEY_PASSWORD` | 密钥口令 |
-
-签名默认启用 APK Signature Scheme v1 / v2 / v3。
-
-> 若上架 Google Play，建议改用 App Bundle（`bundleRelease`）并开启 Play App Signing：由 Play 持有应用签名密钥，本地仅保留上传密钥，遗失后可申请重置。
 
 ## 许可证
 
