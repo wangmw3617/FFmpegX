@@ -226,4 +226,54 @@ class HardwarePlanCalculatorTest {
         assertTrue(plan.encoder is EncoderPlan.Software)
         assertNotNull(plan.badge)
     }
+
+    // ------------------------------- FFmpeg 实际能力过滤（防 Encoder not found） ----
+
+    @Test
+    fun `FFmpeg 不含 mediacodec 编码器时必须回退软件编码`() {
+        // 设备报告说支持 H.264 硬编，但 AAR 里没编 --enable-lib-android-media-codec，
+        // 于是 libavcodec 里根本没有 h264_mediacodec。
+        // 此时若照旧生成 `-c:v h264_mediacodec`，FFmpeg 会瞬间报
+        // "Error opening output files: Encoder not found"。
+        val plan = HardwarePlanCalculator.plan(
+            report,
+            Fixtures.request(hasCpuVideoFilters = false),
+            ffmpegEncoders = setOf("libx264", "aac"),
+        )
+
+        assertTrue(
+            "缺少 h264_mediacodec 时应回退软件编码，实际为 ${plan.encoder}",
+            plan.encoder is EncoderPlan.Software,
+        )
+        assertEquals("libx264", (plan.encoder as EncoderPlan.Software).ffmpegName)
+        assertTrue(
+            "应当给出可读原因，便于用户判断是不是包的问题",
+            plan.warnings.any { it.contains("h264_mediacodec") },
+        )
+    }
+
+    @Test
+    fun `FFmpeg 含 mediacodec 编码器时照常走硬编`() {
+        val plan = HardwarePlanCalculator.plan(
+            report,
+            Fixtures.request(hasCpuVideoFilters = false),
+            ffmpegEncoders = setOf("libx264", "h264_mediacodec"),
+        )
+
+        assertTrue(plan.encoder is EncoderPlan.MediaCodec)
+        assertEquals("h264_mediacodec", (plan.encoder as EncoderPlan.MediaCodec).ffmpegName)
+    }
+
+    @Test
+    fun `编码器集合为空表示未知，不应改变原有行为`() {
+        // 探测失败时返回空集。必须解释成「不做限制」，
+        // 否则一次探测失败就会把硬件加速整个挡掉。
+        val plan = HardwarePlanCalculator.plan(
+            report,
+            Fixtures.request(hasCpuVideoFilters = false),
+            ffmpegEncoders = emptySet(),
+        )
+
+        assertTrue(plan.encoder is EncoderPlan.MediaCodec)
+    }
 }
