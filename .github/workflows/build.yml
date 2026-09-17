@@ -41,6 +41,15 @@ jobs:
     name: Build ffmpeg-kit-next AAR
     runs-on: ubuntu-latest
     steps:
+      # 这个 job 原本不需要仓库内容（它自己去 clone 上游到 ${GITHUB_WORKSPACE}/src），
+      # 所以一直没有 checkout。但 "Derive lib flags" 要读
+      # scripts/build-ffmpeg-kit-next.sh 做库清单一致性断言 —— 没有 checkout 的话
+      # grep 会以「文件不存在」返回 2，配合 set -euo pipefail 直接让 job 挂掉。
+      #
+      # ⚠️ 必须放在 Cache AAR **之前**：actions/checkout 默认会先跑
+      # `git clean -ffdx`，如果排在缓存恢复之后，会把刚恢复出来的 prebuilt/ 删掉。
+      - uses: actions/checkout@v4
+
       # 缓存 key 里不能出现逗号：actions/cache 会直接报
       # "Key Validation Error: ... cannot contain commas" 并让整个 job 失败。
       # 所以这里先把 ABI 列表转成无逗号的形式。
