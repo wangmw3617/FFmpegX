@@ -82,8 +82,6 @@
     <string name="status_cancelled">已取消</string>
 
     <!-- 错误 -->
-    <string name="err_native_missing">原生库未构建</string>
-    <string name="err_native_missing_desc">请先执行 scripts/build-ffmpeg-android.sh 生成 FFmpeg 预编译库，然后重新构建 App。当前仅「媒体信息」可用。</string>
     <string name="err_no_input">请先选择输入文件</string>
     <string name="err_no_output">请先指定输出文件</string>
     <string name="err_empty_command">命令不能为空</string>
