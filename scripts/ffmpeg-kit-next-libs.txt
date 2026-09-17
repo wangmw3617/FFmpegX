@@ -1,0 +1,24 @@
+# ffmpeg-kit-next AAR 启用的外部库清单 —— 唯一事实来源。
+#
+# 本地构建脚本（scripts/build-ffmpeg-kit-next.sh）与 CI（.github/workflows/build.yml）
+# 都读取本文件，请勿在别处重复维护同一份清单。
+#
+# 格式：每行一个库。若该库会在产物里留下可校验的符号，写成 <库名>=<符号>，
+# 多个符号用逗号分隔；符号用于 CI 校验产物，防止 --enable 开关被静默忽略。
+#
+# 每一项都对应 App 运行时真实会用到的能力。删除任何一项都会让对应功能在真机上
+# 失败，而 ffmpeg-kit-next 对无法识别的 --enable-* 选项是静默忽略的，构建过程
+# 不会给出任何警告。
+#
+# gpl 是开关而非库：它决定是否启用 GPL 组件，是 x264 / x265 的前提。
+# 关闭后「兼容优先」策略（全软件编码）会因为缺少软件编码器而失效。
+# libass 提供的是滤镜（subtitles）而非编码器，因此没有编码器符号。
+gpl
+x264=libx264
+x265=libx265
+android-media-codec=h264_mediacodec,hevc_mediacodec
+lame=libmp3lame
+opus=libopus
+libvorbis=libvorbis
+libvpx=libvpx
+libass
