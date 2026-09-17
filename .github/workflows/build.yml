@@ -199,7 +199,7 @@ jobs:
           [ "${MISSING_FILTER}" -eq 0 ] || { echo "::error::AAR 缺少必需滤镜，拒绝继续"; exit 1; }
 
       - name: Upload AAR repository
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: ffmpeg-kit-next-maven
           path: ${{ github.workspace }}/prebuilt
@@ -247,7 +247,7 @@ jobs:
 
       - name: Upload test report
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: unit-test-report
           path: app/build/reports/tests/
@@ -351,7 +351,7 @@ jobs:
           ls -lh artifacts/release/ artifacts/debug/
 
       - name: Upload APKs
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: ffmpegx-apks
           path: artifacts/**/*.apk
