@@ -699,8 +699,9 @@ fun displayNameFromInput(input: String): String {
 fun inputSourceLabel(input: String, temporary: Boolean = false): String = when {
     input.isBlank() -> ""
     temporary -> "已复制到应用缓存"
-    input.startsWith("ffkitsaf:", ignoreCase = true) -> "直接读取所选文件（零拷贝）"
+    input.startsWith("ffkitsaf:", ignoreCase = true) -> "直接读取所选文件"
     input.startsWith("ffkitmem:", ignoreCase = true) -> "来自内存数据"
     input.startsWith("ffkitstream:", ignoreCase = true) -> "来自数据流"
-    else -> input
+    // 兜底也走文件名而不是完整路径 —— 一长串 /storage/emulated/0/... 对用户没有意义
+    else -> displayNameFromInput(input)
 }

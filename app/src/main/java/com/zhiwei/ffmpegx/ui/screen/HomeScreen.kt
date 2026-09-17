@@ -1,5 +1,6 @@
 package com.zhiwei.ffmpegx.ui.screen
 
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -14,6 +15,8 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Animation
 import androidx.compose.material.icons.filled.ContentCut
+import androidx.compose.material.icons.filled.ExpandLess
+import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material.icons.filled.GraphicEq
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Layers
@@ -33,6 +36,9 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
@@ -64,18 +70,47 @@ private data class ToolEntry(
     val route: Any,
 )
 
-private val TOOLS = listOf(
+/** 常用功能：默认展开 */
+private val COMMON_TOOLS = listOf(
     ToolEntry("格式转换", "容器 / 编码器 / 封装", Icons.Default.SwapHoriz, ConvertRoute),
     ToolEntry("视频压缩", "目标体积 / 降分辨率", Icons.Default.Speed, CompressRoute),
     ToolEntry("剪辑截取", "起止时间 / 无损剪切", Icons.Default.ContentCut, TrimRoute),
     ToolEntry("音频处理", "提取 / 音量 / 变速", Icons.Default.GraphicEq, AudioRoute),
     ToolEntry("GIF 制作", "两遍调色板高质量", Icons.Default.Animation, GifRoute),
     ToolEntry("视频拼接", "多文件合并", Icons.Default.Link, ConcatRoute),
+)
+
+/** 更多功能：默认折叠，收纳使用频率较低但更进阶的工具 */
+private val MORE_TOOLS = listOf(
     ToolEntry("字幕处理", "烧录 / 提取 / 封装", Icons.Default.Subtitles, SubtitleRoute),
     ToolEntry("水印画中画", "图片水印 / 分屏", Icons.Default.Layers, OverlayRoute),
-    ToolEntry("媒体信息", "ffprobe 详细解析", Icons.Default.Info, ProbeRoute),
+    ToolEntry("媒体信息", "查看编码 / 分辨率等信息", Icons.Default.Info, ProbeRoute),
     ToolEntry("命令行", "直接写 ffmpeg 参数", Icons.Default.Terminal, RawCommandRoute),
 )
+
+/**
+ * 功能入口的两列网格。常用功能与更多功能共用。
+ *
+ * 内部自带纵向间距：抽成独立 composable 后就不再是 Column 的直接子元素，
+ * 外层的 Arrangement.spacedBy 不会再作用于这些行。
+ */
+@Composable
+private fun ToolGrid(tools: List<ToolEntry>, onOpenTool: (Any) -> Unit) {
+    Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        tools.chunked(2).forEach { rowItems ->
+            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                rowItems.forEach { tool ->
+                    ToolTile(
+                        tool = tool,
+                        modifier = Modifier.weight(1f),
+                        onClick = { onOpenTool(tool.route) },
+                    )
+                }
+                if (rowItems.size == 1) Spacer(Modifier.weight(1f))
+            }
+        }
+    }
+}
 
 @Composable
 fun HomeScreen(
@@ -97,10 +132,11 @@ fun HomeScreen(
     ) {
         if (!device.ffmpegReady) {
             WarningBanner(
-                title = "FFmpeg 核心不可用",
-                message = device.ffmpegError.ifBlank {
-                    "ffmpeg-kit-next 初始化失败。请查看运行日志，或确认 AAR 包含当前设备的 ABI。"
-                },
+                title = "转码引擎不可用",
+                // 不把内部错误（ABI 不匹配、.so 加载失败之类）直接抛给用户，
+                // 那些信息留在「控制台」里供排查，界面上只给出可操作的下一步。
+                message = "当前设备上无法启动转码引擎，暂时不能处理任务。" +
+                    "请尝试重新安装应用；若问题依旧，可在「控制台」查看详细日志。",
             )
         }
 
@@ -120,17 +156,31 @@ fun HomeScreen(
         }
 
         SectionCard(title = "常用功能") {
-            TOOLS.chunked(2).forEach { rowItems ->
-                Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                    rowItems.forEach { tool ->
-                        ToolTile(
-                            tool = tool,
-                            modifier = Modifier.weight(1f),
-                            onClick = { onOpenTool(tool.route) },
-                        )
-                    }
-                    if (rowItems.size == 1) Spacer(Modifier.weight(1f))
-                }
+            ToolGrid(COMMON_TOOLS, onOpenTool)
+        }
+
+        // 更多功能：默认折叠，避免首屏被十几个入口撑满
+        var moreExpanded by remember { mutableStateOf(false) }
+        SectionCard(
+            title = "更多功能",
+            trailing = {
+                Icon(
+                    imageVector = if (moreExpanded) Icons.Default.ExpandLess else Icons.Default.ExpandMore,
+                    contentDescription = if (moreExpanded) "收起" else "展开",
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.clickable { moreExpanded = !moreExpanded },
+                )
+            },
+        ) {
+            if (moreExpanded) {
+                ToolGrid(MORE_TOOLS, onOpenTool)
+            } else {
+                Text(
+                    "字幕、水印、媒体信息、命令行等 ${MORE_TOOLS.size} 个工具",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.clickable { moreExpanded = true },
+                )
             }
         }
 

@@ -36,7 +36,6 @@ import com.zhiwei.ffmpegx.ui.components.SectionCard
 fun SettingsScreen(viewModel: SettingsViewModel = hiltViewModel()) {
     val settings by viewModel.settings.collectAsStateWithLifecycle()
     val device by viewModel.deviceInfo.collectAsStateWithLifecycle()
-    val backendInfo by viewModel.backendInfo.collectAsStateWithLifecycle()
     val nativeLabel by viewModel.nativeLabel.collectAsStateWithLifecycle()
 
     Column(
@@ -70,8 +69,8 @@ fun SettingsScreen(viewModel: SettingsViewModel = hiltViewModel()) {
 
             SwitchRow(
                 title = "启用 Vulkan 滤镜链",
-                subtitle = "把缩放/格式转换交给 GPU。注意：ffmpeg-kit-next 默认构建**未开启** --enable-vulkan，" +
-                    "开启本项前请确认你的 AAR 构建时加了该选项，否则滤镜会直接报错。",
+                subtitle = "把缩放、格式转换等处理交给 GPU，可降低 CPU 占用。" +
+                    "仅在部分设备上生效，未生效时会自动回退到 CPU 处理。",
                 checked = settings.preferVulkan,
                 onCheckedChange = { viewModel.setPreferVulkan(it) },
             )
@@ -88,14 +87,14 @@ fun SettingsScreen(viewModel: SettingsViewModel = hiltViewModel()) {
                 supporting = "硬件编码器不使用这个参数，只有软编才会生效",
             )
             DropdownField(
-                label = "日志级别",
+                label = "日志详细程度",
                 options = AppSettings.LOG_LEVEL_CHOICES.map { it.first },
                 selected = settings.logLevel,
                 labelOf = { level ->
                     AppSettings.LOG_LEVEL_CHOICES.firstOrNull { it.first == level }?.second ?: "标准"
                 },
                 onSelect = { viewModel.setLogLevel(it) },
-                supporting = "调试以上级别会显著增加日志量，只建议排障时使用",
+                supporting = "更详细的日志会占用更多空间，一般保持默认即可",
             )
             SwitchRow(
                 title = "转码时保持亮屏",
@@ -110,7 +109,7 @@ fun SettingsScreen(viewModel: SettingsViewModel = hiltViewModel()) {
             OutlinedTextField(
                 value = settings.outputDir,
                 onValueChange = { viewModel.setOutputDir(it) },
-                label = { Text("默认输出目录（留空使用应用专属目录）") },
+                label = { Text("默认输出目录（留空则保存到 Download/FFmpegX）") },
                 singleLine = true,
                 modifier = Modifier.fillMaxWidth(),
             )
@@ -147,15 +146,11 @@ fun SettingsScreen(viewModel: SettingsViewModel = hiltViewModel()) {
 
         // -------------------------------------------------------------- 关于 ----
         SectionCard(title = "关于") {
-            InfoRow("FFmpeg", nativeLabel)
-            InfoRow("执行核心", backendInfo.backendName.ifBlank { "—" })
-            InfoRow("SAF 直读直写", if (backendInfo.supportsSaf) "支持" else "回退缓存中转")
             InfoRow("应用版本", BuildConfig.VERSION_NAME)
-            InfoRow("包名", "com.zhiwei.ffmpegx")
+            InfoRow("转码引擎版本", nativeLabel)
             Text(
-                "FFmpeg 核心为 ffmpeg-kit-next（arthenica 官方续作，FFmpeg 9.x），" +
-                    "执行的是原样的 ffmpeg 命令行，并支持 SAF 直读直写 —— " +
-                    "选中的文件不必先复制到缓存。所有处理均在本机完成，不联网。",
+                "所有处理都在本机完成，不上传任何文件，也不需要联网。" +
+                    "处理时直接读取你选择的文件，不会额外复制一份到缓存。",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
