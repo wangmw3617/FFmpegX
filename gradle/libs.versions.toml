@@ -1,12 +1,25 @@
 [versions]
 agp = "8.10.1"
 # ⚠️ Kotlin 被 Liquid Glass 依赖顶到了 2.3.10：
-# backdrop 全系（含最早的 1.0.0）都是用 Kotlin ≥2.2.21 编译的，
-# shapes 更狠，最低也要 2.3.0。Kotlin 元数据版本不向下兼容，
-# 2.1.x 的编译器读不了 2.3 编出来的 class，只能跟着升。
+# backdrop 1.0.6 的 POM 里直接写着 kotlin-stdlib 2.3.10，它自己就是
+# 用 2.3.10 编的；shapes 更狠，最低也要 2.3.0。Kotlin 元数据版本
+# 不向下兼容，2.1.x 的编译器读不了 2.3 编出来的 class，只能跟着升。
+#
+# 不能靠「删掉 shapes 依赖」来回避：backdrop 自己就传递依赖 shapes。
 kotlin = "2.3.10"
 ksp = "2.3.10"
-hilt = "2.56.2"
+
+# ⚠️ Hilt 必须 ≥2.60：Kotlin 升到 2.3.10 后，Hilt 的注解处理器读不了
+# 新元数据，直接编译失败：
+#   [Hilt] Provided Metadata instance has version 2.3.0, while maximum
+#   supported version is 2.2.0. To support newer versions, update the
+#   kotlin-metadata-jvm library.
+# 各版本内置的 kotlin-metadata-jvm（决定能读多新的元数据）：
+#   2.56.2 -> 未显式声明（实际 ≤2.2.0）
+#   2.57.x -> 2.1.21
+#   2.58 / 2.59.x -> 2.2.20
+#   2.60+  -> 2.3.21   ← 只有它支持元数据 2.3.0
+hilt = "2.60.1"
 
 coreKtx = "1.16.0"
 activityCompose = "1.10.1"
