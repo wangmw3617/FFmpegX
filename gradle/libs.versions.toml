@@ -42,10 +42,12 @@ ffmpegKitNext = "9.0.0"
 # （Backdrop / drawBackdrop / layerBackdrop），**不含任何高层组件**，
 # 卡片、按钮、导航栏都要自己按它的原语拼。
 #
-# shapes 是配套的形状库（Capsule / RoundedCorner 等），单独发版。
+# ⚠️ 版本必须停在 1.x：2.0.0 起 AAR 元数据要求 minCompileSdk=37，
+#    而本项目是 compileSdk 36（AGP 8.10.1 也不支持 37）。
+#    实测 backdrop 1.0.6 与 shapes 1.2.0 的要求都是 36。
 # ---------------------------------------------------------------------------
-liquidGlass = "2.0.1"
-kyantShapes = "1.2.1"
+liquidGlass = "1.0.6"
+kyantShapes = "1.2.0"
 
 junit = "4.13.2"
 
