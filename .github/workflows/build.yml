@@ -11,6 +11,15 @@ on:
 permissions:
   contents: write
 
+# 连续推送时只保留最后一次。
+#
+# 没有这段的话，推 N 次就是 N 个 run 同时在跑：互相抢 runner 变得更慢，
+# 结果里还要自己分辨哪个对应最终提交。cancel-in-progress 取消的是
+# 「已被更新提交取代」的旧 run —— 语义上安全，因为旧提交的结果已经没意义了。
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 env:
   # ffmpeg-kit-next 的版本（与 gradle/libs.versions.toml 保持一致）
   FFMPEG_KIT_NEXT_VERSION: '9.0.0'
@@ -30,6 +39,28 @@ env:
   FFMPEG_KIT_NEXT_LIBS: 'gpl x264 x265 android-media-codec lame opus libvorbis libvpx libass'
 
 jobs:
+  # ===========================================================================
+  #  静态检查（快速闸门）
+  #
+  #  三个检查器都是纯词法/结构分析，几秒跑完，不需要 AAR、不需要 Android SDK。
+  #  放在最前面当闸门：语法、类体重复成员、@Composable 上下文、
+  #  以及封装函数的参数类型约束这四类问题在这里就拦下，
+  #  不必等几分钟的完整构建才发现一个括号写错了。
+  # ===========================================================================
+  lint:
+    name: Static checks
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run static checks
+        run: |
+          set -e
+          KT_FILES="$(git ls-files '*.kt')"
+          echo "待检查的 Kotlin 文件：$(echo "${KT_FILES}" | wc -l) 个"
+          python3 scripts/checks/ktscan.py ${KT_FILES}
+          python3 scripts/checks/dupcheck.py ${KT_FILES}
+          python3 scripts/checks/composecheck.py ${KT_FILES}
+
   # ===========================================================================
   #  ffmpeg-kit-next AAR
   #
@@ -317,7 +348,8 @@ jobs:
   test:
     name: Unit tests
     runs-on: ubuntu-latest
-    needs: ffmpeg-kit-next
+    # 静态检查不过就不必浪费几分钟去编译
+    needs: [ffmpeg-kit-next, lint]
     steps:
       - uses: actions/checkout@v4
 
@@ -388,7 +420,12 @@ jobs:
   build:
     name: Build APKs
     runs-on: ubuntu-latest
-    needs: [ffmpeg-kit-next, test]
+    # 刻意**不依赖 test**：两者都只依赖 AAR 与 lint，于是能并行跑。
+    # 早先是串行（build 依赖 test），一次要等 5~6 分钟；
+    # 并行后总时长由较慢的那个决定，约 3.5 分钟。
+    # 测试失败时整个 run 仍然是红的 —— release 同时依赖 test（见下），
+    # 所以不会出现「测试挂了但照样发布」。
+    needs: [ffmpeg-kit-next, lint]
     steps:
       - uses: actions/checkout@v4
 
@@ -534,7 +571,9 @@ jobs:
   release:
     name: Publish release
     runs-on: ubuntu-latest
-    needs: build
+    # 必须同时等 test：build 已经与 test 并行了，只依赖 build 的话
+    # 「测试失败但打包成功」也会被发布出去。
+    needs: [test, build]
     if: startsWith(github.ref, 'refs/tags/v')
     steps:
       - name: Download APKs
