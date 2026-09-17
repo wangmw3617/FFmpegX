@@ -226,7 +226,7 @@ jobs:
           build-tools: ${{ env.ANDROID_BUILD_TOOLS }}
 
       - name: Download AAR
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: ffmpeg-kit-next-maven
           path: ${{ github.workspace }}/kit-next-repo
@@ -275,7 +275,7 @@ jobs:
           build-tools: ${{ env.ANDROID_BUILD_TOOLS }}
 
       - name: Download AAR
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: ffmpeg-kit-next-maven
           path: ${{ github.workspace }}/kit-next-repo
@@ -368,7 +368,7 @@ jobs:
     if: startsWith(github.ref, 'refs/tags/v')
     steps:
       - name: Download APKs
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: ffmpegx-apks
           path: apks
