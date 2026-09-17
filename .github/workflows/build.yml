@@ -89,7 +89,7 @@ jobs:
       # 缓存 key 含库清单指纹：改清单会强制重建，避免命中参数不同的旧 AAR
       - name: Cache AAR
         id: cache
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: ${{ github.workspace }}/prebuilt
           key: aar-${{ env.FFMPEG_KIT_NEXT_VERSION }}-${{ steps.abis.outputs.slug }}-${{ hashFiles('scripts/ffmpeg-kit-next-libs.txt') }}-${{ runner.os }}
@@ -106,7 +106,7 @@ jobs:
 
       - name: Cache Nix store
         if: steps.cache.outputs.cache-hit != 'true'
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: /nix/store
           key: nix-${{ env.FFMPEG_KIT_NEXT_NIX_PROFILE }}-${{ runner.os }}
@@ -232,7 +232,7 @@ jobs:
           path: ${{ github.workspace }}/kit-next-repo
 
       - name: Cache Gradle
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: |
             ~/.gradle/caches
@@ -281,7 +281,7 @@ jobs:
           path: ${{ github.workspace }}/kit-next-repo
 
       - name: Cache Gradle
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: |
             ~/.gradle/caches
