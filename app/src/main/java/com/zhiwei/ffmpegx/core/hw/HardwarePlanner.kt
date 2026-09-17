@@ -132,7 +132,7 @@ class HardwarePlanner @javax.inject.Inject constructor(
     private val scanner: MediaCodecScanner,
 ) {
     fun plan(request: TranscodeRequest): HardwarePlan =
-        HardwarePlanCalculator.plan(scanner.report(), request)
+        HardwarePlanCalculator.plan(scanner.report(), request, FfmpegEncoders.snapshot())
 }
 
 /**
@@ -141,7 +141,15 @@ class HardwarePlanner @javax.inject.Inject constructor(
  */
 object HardwarePlanCalculator {
 
-    fun plan(report: DeviceCodecReport, request: TranscodeRequest): HardwarePlan {
+    /**
+     * @param ffmpegEncoders 当前 FFmpeg 构建**实际包含**的编码器集合（见 [FfmpegEncoders]）。
+     *        空集表示「未知」，此时不做可用性过滤，保持原有行为。
+     */
+    fun plan(
+        report: DeviceCodecReport,
+        request: TranscodeRequest,
+        ffmpegEncoders: Set<String> = emptySet(),
+    ): HardwarePlan {
         val reasons = mutableListOf<String>()
         val warnings = mutableListOf<String>()
 
@@ -162,7 +170,21 @@ object HardwarePlanCalculator {
         // 「质量优先」要主动放弃硬件编码器（硬编的画质与体积控制不如 libx264），
         // 所以这里先把 hwEncoder 置空，而不是先查再决定 —— 否则会误报「找不到硬件编码器」。
         val qualityFirst = request.strategy == HwStrategy.QUALITY
-        val hwEncoder = if (qualityFirst) {
+
+        // 设备支持 ≠ FFmpeg 编了这个编码器。
+        // MediaCodecScanner 读的是 Android 的 MediaCodecList，只能证明**芯片**能做；
+        // 而 h264_mediacodec 这类编码器是否存在，取决于 AAR 构建时有没有
+        // --enable-lib-android-media-codec（ffmpeg-kit-next 里默认关闭）。
+        // 两者不一致时生成的 `-c:v h264_mediacodec` 会在启动瞬间报
+        // "Encoder not found"，所以必须先按 FFmpeg 的实际能力过一遍。
+        val hwEncoderAvailable = ffmpegEncoders.isEmpty() ||
+            ffmpegEncoders.contains(request.targetCodec.mcName)
+        if (!hwEncoderAvailable && !qualityFirst) {
+            warnings += "当前 FFmpeg 构建不含 ${request.targetCodec.mcName}，" +
+                "硬件编码不可用，已改用软件编码。"
+        }
+
+        val hwEncoder = if (qualityFirst || !hwEncoderAvailable) {
             null
         } else {
             report.pickHardwareEncoder(
@@ -181,13 +203,18 @@ object HardwarePlanCalculator {
             }
 
             qualityFirst -> {
-                val fallback = report.pickHardwareEncoder(
-                    codec = request.targetCodec,
-                    width = request.targetWidth,
-                    height = request.targetHeight,
-                    fps = request.targetFps,
-                    bitrate = request.targetBitrate,
-                )
+                // 软编不可用时才退回硬编，且同样要确认 FFmpeg 里真有这个编码器
+                val fallback = if (hwEncoderAvailable) {
+                    report.pickHardwareEncoder(
+                        codec = request.targetCodec,
+                        width = request.targetWidth,
+                        height = request.targetHeight,
+                        fps = request.targetFps,
+                        bitrate = request.targetBitrate,
+                    )
+                } else {
+                    null
+                }
                 warnings += "${request.targetCodec.shortLabel} 没有可用的软件编码器，" +
                     "「质量优先」无法生效，仍使用硬件编码。"
                 if (fallback != null) {
