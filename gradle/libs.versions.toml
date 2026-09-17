@@ -1,7 +1,11 @@
 [versions]
 agp = "8.10.1"
-kotlin = "2.1.21"
-ksp = "2.1.21-2.0.1"
+# ⚠️ Kotlin 被 Liquid Glass 依赖顶到了 2.3.10：
+# backdrop 全系（含最早的 1.0.0）都是用 Kotlin ≥2.2.21 编译的，
+# shapes 更狠，最低也要 2.3.0。Kotlin 元数据版本不向下兼容，
+# 2.1.x 的编译器读不了 2.3 编出来的 class，只能跟着升。
+kotlin = "2.3.10"
+ksp = "2.3.10"
 hilt = "2.56.2"
 
 coreKtx = "1.16.0"
@@ -42,9 +46,12 @@ ffmpegKitNext = "9.0.0"
 # （Backdrop / drawBackdrop / layerBackdrop），**不含任何高层组件**，
 # 卡片、按钮、导航栏都要自己按它的原语拼。
 #
-# ⚠️ 版本必须停在 1.x：2.0.0 起 AAR 元数据要求 minCompileSdk=37，
-#    而本项目是 compileSdk 36（AGP 8.10.1 也不支持 37）。
-#    实测 backdrop 1.0.6 与 shapes 1.2.0 的要求都是 36。
+# ⚠️ 版本选择的两个硬约束（都是实测出来的）：
+#    1) backdrop 2.0.0 起 AAR 元数据要求 minCompileSdk=37，
+#       而本项目是 compileSdk 36（AGP 8.10.1 也不支持 37）→ 只能停在 1.x；
+#    2) 1.0.5 以下（1.0.3/1.0.4）虽然 minCompileSdk=1 更宽松，
+#       但它们用 Kotlin 2.3.0 编译，和 shapes 的最低要求一样。
+#    取 1.0.6 + shapes 1.2.0：两者都由 Kotlin 2.3.10 编译，与本项目一致。
 # ---------------------------------------------------------------------------
 liquidGlass = "1.0.6"
 kyantShapes = "1.2.0"
