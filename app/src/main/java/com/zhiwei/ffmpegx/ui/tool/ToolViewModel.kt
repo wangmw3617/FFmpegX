@@ -9,6 +9,8 @@ import com.zhiwei.ffmpegx.core.cmd.AudioSpec
 import com.zhiwei.ffmpegx.core.cmd.Commands
 import com.zhiwei.ffmpegx.core.cmd.CompressSpec
 import com.zhiwei.ffmpegx.core.cmd.ConcatSpec
+import com.zhiwei.ffmpegx.core.cmd.CropSpec
+import com.zhiwei.ffmpegx.core.cmd.DelogoSpec
 import com.zhiwei.ffmpegx.core.cmd.GifSpec
 import com.zhiwei.ffmpegx.core.cmd.InputSpec
 import com.zhiwei.ffmpegx.core.cmd.OutputSpec
@@ -16,8 +18,12 @@ import com.zhiwei.ffmpegx.core.cmd.OverlayMode
 import com.zhiwei.ffmpegx.core.cmd.OverlayPosition
 import com.zhiwei.ffmpegx.core.cmd.OverlaySpec
 import com.zhiwei.ffmpegx.core.cmd.RateMode
+import com.zhiwei.ffmpegx.core.cmd.RotateSpec
+import com.zhiwei.ffmpegx.core.cmd.SlideshowSpec
+import com.zhiwei.ffmpegx.core.cmd.SpeedSpec
 import com.zhiwei.ffmpegx.core.cmd.SubtitleMode
 import com.zhiwei.ffmpegx.core.cmd.SubtitleSpec
+import com.zhiwei.ffmpegx.core.cmd.ThumbnailSpec
 import com.zhiwei.ffmpegx.core.cmd.TrimSpec
 import com.zhiwei.ffmpegx.core.cmd.VideoEncodeSpec
 import com.zhiwei.ffmpegx.core.engine.FFprobeEngine
