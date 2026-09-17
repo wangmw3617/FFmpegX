@@ -52,7 +52,9 @@ import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.zhiwei.ffmpegx.core.hw.VideoCodec
+import com.zhiwei.ffmpegx.core.task.TaskEntity
 import com.zhiwei.ffmpegx.core.task.TaskFeature
+import com.zhiwei.ffmpegx.ui.components.DeleteTaskDialog
 import com.zhiwei.ffmpegx.ui.components.EmptyState
 import com.zhiwei.ffmpegx.ui.components.InfoRow
 import com.zhiwei.ffmpegx.ui.components.SectionCard
@@ -179,6 +181,8 @@ fun HomeScreen(
 
         // 更多功能：默认折叠，避免首屏被十几个入口撑满
         var moreExpanded by remember { mutableStateOf(false) }
+        // 首页的「最近任务」也能删，同样会连产物文件一起删掉，所以也要确认
+        var pendingDelete by remember { mutableStateOf<TaskEntity?>(null) }
         SectionCard(
             title = "更多功能",
             trailing = {
@@ -214,10 +218,18 @@ fun HomeScreen(
                     TaskRow(
                         task = task,
                         onRetry = { tasksViewModel.retry(task.id) },
-                        onDelete = { tasksViewModel.remove(task.id) },
+                        onDelete = { pendingDelete = task },
                     )
                 }
             }
+        }
+
+        pendingDelete?.let { task ->
+            DeleteTaskDialog(
+                task = task,
+                onConfirm = { tasksViewModel.remove(task.id) },
+                onDismiss = { pendingDelete = null },
+            )
         }
 
         Spacer(Modifier.height(24.dp))

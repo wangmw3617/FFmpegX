@@ -23,6 +23,7 @@ import androidx.compose.material.icons.filled.ErrorOutline
 import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.WarningAmber
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.AssistChip
 import androidx.compose.material3.AssistChipDefaults
 import androidx.compose.material3.Card
@@ -574,6 +575,86 @@ fun TaskRow(
             }
         }
     }
+}
+
+/**
+ * 删除确认弹窗。
+ *
+ * 「删除任务」不只是移除一条记录 —— 它会连产物文件一起删掉
+ * （`Download/FFmpegX` 里那个成品），而且不可恢复。
+ * 早先没有任何提示，用户以为在清理列表，实际把转好的视频删了。
+ */
+@Composable
+private fun ConfirmDeleteDialog(
+    title: String,
+    message: String,
+    onConfirm: () -> Unit,
+    onDismiss: () -> Unit,
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(title) },
+        text = { Text(message) },
+        confirmButton = {
+            TextButton(onClick = { onConfirm(); onDismiss() }) {
+                Text("删除", color = MaterialTheme.colorScheme.error)
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) { Text("取消") }
+        },
+    )
+}
+
+/** 删除单条任务前的确认。会指出具体哪个文件将被一并删除。 */
+@Composable
+fun DeleteTaskDialog(
+    task: TaskEntity,
+    onConfirm: () -> Unit,
+    onDismiss: () -> Unit,
+) {
+    val context = LocalContext.current
+    val label by produceState(initialValue = "", task.outputPath) {
+        value = if (task.statusEnum == TaskStatus.SUCCESS && task.outputPath.isNotBlank()) {
+            MediaFiles.displayNameOf(context, task.outputPath)
+        } else {
+            ""
+        }
+    }
+    ConfirmDeleteDialog(
+        title = "删除这条任务？",
+        message = if (label.isNotBlank()) {
+            "会同时删除已生成的文件 $label，此操作无法恢复。"
+        } else {
+            "会移除这条任务记录。"
+        },
+        onConfirm = onConfirm,
+        onDismiss = onDismiss,
+    )
+}
+
+/**
+ * 清理已完成任务前的确认。
+ *
+ * @param fileCount 会被一并删除的产物数量 —— 这个数字必须让用户看到：
+ *        「清理列表」和「删掉 N 个成品」是完全不同的心理预期。
+ */
+@Composable
+fun ClearFinishedDialog(
+    fileCount: Int,
+    onConfirm: () -> Unit,
+    onDismiss: () -> Unit,
+) {
+    ConfirmDeleteDialog(
+        title = "清理已完成的任务？",
+        message = if (fileCount > 0) {
+            "会同时删除这些任务生成的 $fileCount 个文件，此操作无法恢复。"
+        } else {
+            "会移除所有已完成的任务记录。"
+        },
+        onConfirm = onConfirm,
+        onDismiss = onDismiss,
+    )
 }
 
 @Composable

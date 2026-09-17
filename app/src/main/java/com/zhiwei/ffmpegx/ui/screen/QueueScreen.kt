@@ -32,8 +32,11 @@ import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.zhiwei.ffmpegx.core.media.MediaFiles
+import com.zhiwei.ffmpegx.core.task.TaskEntity
 import com.zhiwei.ffmpegx.core.task.TaskStatus
 import com.zhiwei.ffmpegx.ui.components.ChoiceChips
+import com.zhiwei.ffmpegx.ui.components.ClearFinishedDialog
+import com.zhiwei.ffmpegx.ui.components.DeleteTaskDialog
 import com.zhiwei.ffmpegx.ui.components.EmptyState
 import com.zhiwei.ffmpegx.ui.components.RunningTaskCard
 import com.zhiwei.ffmpegx.ui.components.TaskRow
@@ -52,6 +55,9 @@ fun QueueScreen(viewModel: TasksViewModel = hiltViewModel()) {
     val current by viewModel.current.collectAsStateWithLifecycle()
     val progress by viewModel.progress.collectAsStateWithLifecycle()
     var filter by remember { mutableStateOf(QueueFilter.ALL) }
+    // 删除任务会连产物文件一起删掉，不可恢复，所以两个入口都要先确认
+    var pendingDelete by remember { mutableStateOf<TaskEntity?>(null) }
+    var confirmClear by remember { mutableStateOf(false) }
 
     val filtered = remember(tasks, filter) {
         when (filter) {
@@ -86,7 +92,7 @@ fun QueueScreen(viewModel: TasksViewModel = hiltViewModel()) {
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.weight(1f),
                 )
-                TextButton(onClick = { viewModel.clearFinished() }) {
+                TextButton(onClick = { confirmClear = true }) {
                     Icon(Icons.Default.DeleteSweep, null, Modifier.size(16.dp))
                     Spacer(Modifier.width(4.dp))
                     Text("清理已完成")
@@ -128,10 +134,27 @@ fun QueueScreen(viewModel: TasksViewModel = hiltViewModel()) {
                             }
                         },
                         onRetry = { viewModel.retry(task.id) },
-                        onDelete = { viewModel.remove(task.id) },
+                        onDelete = { pendingDelete = task },
                     )
                 }
             }
+        }
+
+        // ---- 删除确认 ----
+        // 这两个动作都会真的删掉 Download/FFmpegX 里的成品文件，不可恢复。
+        pendingDelete?.let { task ->
+            DeleteTaskDialog(
+                task = task,
+                onConfirm = { viewModel.remove(task.id) },
+                onDismiss = { pendingDelete = null },
+            )
+        }
+        if (confirmClear) {
+            ClearFinishedDialog(
+                fileCount = tasks.count { it.isFinished && it.outputPath.isNotBlank() },
+                onConfirm = { viewModel.clearFinished() },
+                onDismiss = { confirmClear = false },
+            )
         }
     }
 }
