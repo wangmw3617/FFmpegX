@@ -38,6 +38,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.semantics.Role
@@ -275,6 +276,16 @@ private fun GlassBottomBar(
  * 选中时在图标与文字后面垫一层**胶囊玻璃**。它引用的是同一个 backdrop，
  * 于是会再采一次底栏背后的内容 —— 看上去就是叠在玻璃上的一小片玻璃，
  * 而不是一块纯色高亮。未选中时什么都没有，只有图标与文字。
+ *
+ * ## 为什么点击区必须也是胶囊
+ *
+ * Material 的涟漪**按节点形状裁剪**：节点不带形状时按矩形裁，涟漪铺满后
+ * 就是一块方角高亮，在圆角底栏里与整体的圆形语言直接冲突。
+ * 所以这里给点击区套上和指示器同一个胶囊形状 —— 涟漪和指示器同形，
+ * 按下的地方就是高亮的地方。
+ *
+ * 裁剪不会切到内容：点击区是**整个 64dp 槽位**，而图标+文字+角标只占中间
+ * 约 42dp，落在胶囊的平顶/平底区间内；圆角只在左右两端。
  */
 @Composable
 private fun GlassTab(
@@ -285,8 +296,12 @@ private fun GlassTab(
     modifier: Modifier = Modifier,
     onClick: () -> Unit,
 ) {
+    val shape = RoundedCornerShape(percent = 50)
+
     Box(
-        modifier.clickable(role = Role.Tab, onClick = onClick),
+        modifier
+            .clip(shape)
+            .clickable(role = Role.Tab, onClick = onClick),
         contentAlignment = Alignment.Center,
     ) {
         if (selected) {
@@ -297,7 +312,7 @@ private fun GlassTab(
                     .padding(horizontal = 6.dp, vertical = 7.dp)
                     .liquidGlass(
                         backdrop = backdrop,
-                        shape = RoundedCornerShape(percent = 50),
+                        shape = shape,
                         blurRadius = 10.dp,
                         lensAmount = 8.dp,
                     ),
