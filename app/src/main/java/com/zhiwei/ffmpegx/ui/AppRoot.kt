@@ -4,9 +4,13 @@ import android.Manifest
 import android.os.Build
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.core.Spring
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.spring
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -16,7 +20,9 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.navigationBars
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -40,8 +46,13 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Shape
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.clearAndSetSemantics
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
@@ -221,6 +232,12 @@ fun AppRoot(settings: AppSettings) {
  * 四周留白能让背景与内容从边上透出来，玻璃的「一片浮在内容之上」的
  * 观感才成立；通栏贴边时玻璃只和屏幕边缘相接，看起来就像一块实心色板。
  */
+/** 选中指示器的高度。比槽位矮一档，视觉上才「收」得住。 */
+private val INDICATOR_HEIGHT = 44.dp
+
+/** 指示器相对槽位两侧各收进去多少 */
+private val INDICATOR_INSET = 14.dp
+
 @Composable
 private fun GlassBottomBar(
     navController: NavHostController,
@@ -231,7 +248,11 @@ private fun GlassBottomBar(
     val tasksViewModel: TasksViewModel = hiltViewModel()
     val activeCount by tasksViewModel.activeCount.collectAsStateWithLifecycle()
 
-    Row(
+    val selectedIndex = TOP_LEVEL_TABS.indexOfFirst {
+        destination?.hasRoute(it.route::class) == true
+    }
+
+    BoxWithConstraints(
         modifier
             .fillMaxWidth()
             // 修饰符顺序有讲究：先避开手势条，再留出悬浮的空白，
@@ -246,94 +267,143 @@ private fun GlassBottomBar(
                 blurRadius = 22.dp,
                 lensAmount = 12.dp,
             ),
-        verticalAlignment = Alignment.CenterVertically,
     ) {
-        TOP_LEVEL_TABS.forEach { tab ->
-            val selected = destination?.hasRoute(tab.route::class) == true
-            GlassTab(
-                tab = tab,
-                selected = selected,
-                badgeCount = if (tab.route == QueueRoute) activeCount else 0,
-                backdrop = backdrop,
-                modifier = Modifier.weight(1f).fillMaxHeight(),
-                onClick = {
-                    if (!selected) {
-                        navController.navigate(tab.route) {
-                            popUpTo(HomeRoute) { saveState = true }
-                            launchSingleTop = true
-                            restoreState = true
-                        }
-                    }
-                },
-            )
-        }
-    }
-}
+        val tabWidth = maxWidth / TOP_LEVEL_TABS.size
+        val indicatorShape = RoundedCornerShape(percent = 50)
 
-/**
- * 单个底栏项。
- *
- * 选中时在图标与文字后面垫一层**胶囊玻璃**。它引用的是同一个 backdrop，
- * 于是会再采一次底栏背后的内容 —— 看上去就是叠在玻璃上的一小片玻璃，
- * 而不是一块纯色高亮。未选中时什么都没有，只有图标与文字。
- *
- * ## 为什么点击区必须也是胶囊
- *
- * Material 的涟漪**按节点形状裁剪**：节点不带形状时按矩形裁，涟漪铺满后
- * 就是一块方角高亮，在圆角底栏里与整体的圆形语言直接冲突。
- * 所以这里给点击区套上和指示器同一个胶囊形状 —— 涟漪和指示器同形，
- * 按下的地方就是高亮的地方。
- *
- * 裁剪不会切到内容：点击区是**整个 64dp 槽位**，而图标+文字+角标只占中间
- * 约 42dp，落在胶囊的平顶/平底区间内；圆角只在左右两端。
- */
-@Composable
-private fun GlassTab(
-    tab: TopLevelTab,
-    selected: Boolean,
-    badgeCount: Int,
-    backdrop: Backdrop,
-    modifier: Modifier = Modifier,
-    onClick: () -> Unit,
-) {
-    val shape = RoundedCornerShape(percent = 50)
+        // 指示器是**底栏里单独的一条滑动胶囊**，而不是每个槽位各自画一个。
+        //
+        // 这是「灵动」的关键：切换标签时它带弹性地从一格滑到另一格，有过程；
+        // 原先每个槽位自己画自己的，效果是「旧的瞬间消失、新的瞬间出现」——
+        // 状态变化没有过程，就只剩一个开关。
+        val slide by animateFloatAsState(
+            targetValue = if (selectedIndex >= 0) selectedIndex.toFloat() else 0f,
+            animationSpec = spring(
+                dampingRatio = 0.68f,
+                stiffness = Spring.StiffnessMediumLow,
+            ),
+            label = "indicatorSlide",
+        )
 
-    Box(
-        modifier
-            .clip(shape)
-            .clickable(role = Role.Tab, onClick = onClick),
-        contentAlignment = Alignment.Center,
-    ) {
-        if (selected) {
+        if (selectedIndex >= 0) {
             Box(
                 Modifier
-                    .fillMaxWidth()
-                    .fillMaxHeight()
-                    .padding(horizontal = 6.dp, vertical = 7.dp)
+                    .align(Alignment.CenterStart)
+                    .offset(x = tabWidth * slide + INDICATOR_INSET)
+                    .width(tabWidth - INDICATOR_INSET * 2)
+                    .height(INDICATOR_HEIGHT)
                     .liquidGlass(
                         backdrop = backdrop,
-                        shape = shape,
+                        shape = indicatorShape,
                         blurRadius = 10.dp,
                         lensAmount = 8.dp,
                     ),
             )
         }
 
+        Row(Modifier.fillMaxSize(), verticalAlignment = Alignment.CenterVertically) {
+            TOP_LEVEL_TABS.forEachIndexed { index, tab ->
+                val selected = index == selectedIndex
+                GlassTab(
+                    tab = tab,
+                    selected = selected,
+                    badgeCount = if (tab.route == QueueRoute) activeCount else 0,
+                    indicatorShape = indicatorShape,
+                    modifier = Modifier.weight(1f).fillMaxHeight(),
+                    onClick = {
+                        if (!selected) {
+                            navController.navigate(tab.route) {
+                                popUpTo(HomeRoute) { saveState = true }
+                                launchSingleTop = true
+                                restoreState = true
+                            }
+                        }
+                    },
+                )
+            }
+        }
+    }
+}
+
+/**
+ * 单个底栏项：只负责内容与点击，不再自己画指示器。
+ *
+ * ## 为什么把指示器挪出去
+ *
+ * 指示器原先是每个槽位各自画的一个胶囊，尺寸被「图标 + 文字」撑到几乎占满
+ * 整个槽位（约 78×50dp，槽位才 64dp 高）。挪到底栏层做成**一条滑动的胶囊**
+ * 之后，它可以比内容更小一圈（44dp 高、两侧各收 14dp），也有了滑动的过程。
+ *
+ * ## 为什么点击区也要是胶囊
+ *
+ * Material 的涟漪**按节点形状裁剪**：节点不带形状时按矩形裁，涟漪铺满后
+ * 就是一块方角高亮，与整体的圆形语言冲突。所以点击区套上和指示器同一个胶囊。
+ *
+ * ## 内容为什么放在点击层外面
+ *
+ * 胶囊会裁掉超出形状的部分，而角标本来就探出图标顶边一点，跟着一起裁就会被
+ * 切掉一块。代价是语义要显式补：内容层清空语义、点击层给出描述，
+ * 否则 TalkBack 读不到这个标签页叫什么。
+ */
+@Composable
+private fun GlassTab(
+    tab: TopLevelTab,
+    selected: Boolean,
+    badgeCount: Int,
+    indicatorShape: Shape,
+    modifier: Modifier = Modifier,
+    onClick: () -> Unit,
+) {
+    Box(modifier, contentAlignment = Alignment.Center) {
+        // ① 点击层：与指示器同形同高，涟漪不会大出一圈
+        Box(
+            Modifier
+                .fillMaxSize()
+                .padding(vertical = (BOTTOM_BAR_HEIGHT - INDICATOR_HEIGHT) / 2)
+                .clip(indicatorShape)
+                .clickable(role = Role.Tab, onClick = onClick)
+                .semantics { contentDescription = tab.label },
+        )
+
+        // ② 内容层：不参与裁剪，角标可以正常探出
         val tint = if (selected) {
             MaterialTheme.colorScheme.primary
         } else {
             MaterialTheme.colorScheme.onSurfaceVariant
         }
+        // 选中时图标轻微放大 —— 让切换有「回应」，而不只是换了个颜色
+        val iconScale by animateFloatAsState(
+            targetValue = if (selected) 1f else 0.86f,
+            animationSpec = spring(dampingRatio = 0.5f, stiffness = Spring.StiffnessMedium),
+            label = "iconScale",
+        )
         Column(
+            modifier = Modifier.clearAndSetSemantics { },
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.Center,
         ) {
             if (badgeCount > 0) {
                 BadgedBox(badge = { Badge { Text(badgeCount.toString()) } }) {
-                    Icon(tab.icon, contentDescription = tab.label, tint = tint)
+                    Icon(
+                        tab.icon,
+                        contentDescription = null,
+                        tint = tint,
+                        modifier = Modifier.graphicsLayer {
+                            scaleX = iconScale
+                            scaleY = iconScale
+                        },
+                    )
                 }
             } else {
-                Icon(tab.icon, contentDescription = tab.label, tint = tint)
+                Icon(
+                    tab.icon,
+                    contentDescription = null,
+                    tint = tint,
+                    modifier = Modifier.graphicsLayer {
+                        scaleX = iconScale
+                        scaleY = iconScale
+                    },
+                )
             }
             Spacer(Modifier.height(2.dp))
             Text(
