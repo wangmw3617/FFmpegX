@@ -367,7 +367,7 @@ class TaskRepository @Inject constructor(
         val startedAt = System.currentTimeMillis()
 
         try {
-            commands.forEachIndexed { index, args ->
+            for ((index, args) in commands.withIndex()) {
                 val isLast = index == commands.lastIndex
                 // 多遍任务：把每一遍的进度折算进整体进度
                 var passProgress = 0.0
@@ -396,7 +396,14 @@ class TaskRepository @Inject constructor(
                     }
                 }
 
-                if (finalStatus == TaskStatus.FAILED) return@forEachIndexed
+                // 某一遍失败就停下。多遍任务的后一遍依赖前一遍的产物
+                // （GIF 的第二遍要读第一遍生成的调色板），继续跑只是白白多编一次；
+                // 更糟的是失败信息会被后一遍覆盖，用户看到的原因就不是真正的那个。
+                //
+                // 这里必须用 for + break：原先写的是 `return@forEachIndexed`，
+                // 而它在 Kotlin 里等价于 **continue** —— 只跳过当前迭代的剩余部分，
+                // 循环照常进入下一遍，等于没拦住。
+                if (finalStatus == TaskStatus.FAILED) break
                 if (!isLast) {
                     // 中间遍次结束，把整体进度推到该遍的边界
                     val boundary = ((index + 1).toDouble() / commands.size * 100).toInt()
