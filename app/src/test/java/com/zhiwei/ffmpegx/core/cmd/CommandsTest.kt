@@ -814,11 +814,13 @@ class CommandsTest {
     }
 
     @Test
-    fun `png 缩略图不生成 q v`() {
-        // -q:v 是 JPEG 的量表，对 png 没有意义
+    fun `png 缩略图不生成 q v 且仍走 image2 封装`() {
+        // -q:v 是 JPEG 的量表，对 png 没有意义。
+        // 封装器必须仍是 image2 —— png 不是 muxer 名，`-f png` 会被 FFmpeg 拒绝
+        // （Requested output format 'png' is not known），且退出码为 0，不易察觉。
         val args = thumbnailArgs(format = "png")
         assertFalse(args.contains("-q:v"))
-        assertTrue(args.containsSequence("-f", "png"))
+        assertTrue(args.containsSequence("-f", "image2"))
     }
 
     // ================================================================ 视频变速 ====

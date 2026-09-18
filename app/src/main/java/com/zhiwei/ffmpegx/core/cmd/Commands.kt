@@ -564,7 +564,11 @@ object Commands {
                 filterGraph(listOf("scale=${spec.width}:-1:flags=lanczos"))
             }
             if (spec.format == "jpg") raw("-q:v", spec.quality.toString())
-            raw("-f", if (spec.format == "jpg") "image2" else spec.format)
+            // 统一走 image2 封装器：**png 并不是一个 muxer 名**，`-f png` 会被
+            // FFmpeg 直接拒绝（Requested output format 'png' is not known），
+            // 而它的退出码仍然是 0 —— 只有产物不存在才看得出来，很难查。
+            // 具体编解码器由输出文件扩展名推断，image2 对 jpg / png 都适用。
+            raw("-f", "image2")
             output(spec.output)
         }.build()
 
