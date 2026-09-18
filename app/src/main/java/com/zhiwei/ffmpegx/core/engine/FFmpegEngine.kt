@@ -157,7 +157,9 @@ class FFmpegEngine @Inject constructor() {
 
         else -> buildString {
             append("FFmpeg 退出码 ").append(code)
-            val reason = tail.lastOrNull { it.isNotBlank() }
+            // 取「根因那一行」而不是最后一行：FFmpeg 的报错是级联的，
+            // 最后一行往往只是 `Invalid argument` 这类连带后果。详见 pickErrorLine。
+            val reason = pickErrorLine(tail)
             if (reason != null) {
                 append("：").append(reason.take(300))
             }
