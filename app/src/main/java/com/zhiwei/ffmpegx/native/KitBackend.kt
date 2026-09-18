@@ -163,12 +163,12 @@ internal class KitBackend(
             // 外部只能走公开 getter：getReturnCode() / getFailStackTrace()。
             val code = session.getReturnCode()
             if (code != null && !ReturnCode.isSuccess(code)) {
-                error("ffprobe 退出码 ${code.value}：${session.getFailStackTrace() ?: "无详细信息"}")
+                error("读取失败（退出码 ${code.value}）：${session.getFailStackTrace() ?: "无详细信息"}")
             }
             // MediaInformationSession.mediaInformation 是 private var，
             // 只能通过 open fun getMediaInformation() 取。
             val info = session.getMediaInformation()
-                ?: error("ffprobe 没有返回媒体信息（文件可能已损坏或不是媒体文件）")
+                ?: error("没有返回媒体信息（文件可能已损坏或不是媒体文件）")
 
             // getAllProperties() 返回的就是 ffprobe -print_format json -show_format -show_streams
             // 的完整 JSON，与「媒体信息」页期望的结构一致。

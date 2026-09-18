@@ -1037,7 +1037,7 @@ class ToolViewModel @Inject constructor(
             // 后端加载失败的真实原因在 loadError() 里（KitBackend 已把 cause 链带出来）
             val detail = FFmpegNative.loadError().takeIf { it.isNotBlank() }
             _state.update {
-                it.copy(error = "FFmpeg 核心未就绪" + (detail?.let { d -> "：$d" } ?: "，请重新安装应用"))
+                it.copy(error = "转码引擎未就绪" + (detail?.let { d -> "：$d" } ?: "，请重新安装应用"))
             }
             return
         }
@@ -1055,8 +1055,8 @@ class ToolViewModel @Inject constructor(
             val concatHint = if (feature == TaskFeature.CONCAT &&
                 (listOf(current.form.inputPath) + current.form.extraInputs).any { isVirtualInput(it) }
             ) {
-                "拼接的「快速合并（concat demuxer）」不支持来自系统授权的文件，" +
-                    "请改用「滤镜拼接」，或先把片段导入应用目录。"
+                "拼接的「快速合并」不支持来自系统授权的文件，" +
+                    "请改用「逐帧重编码」，或先把片段保存到本机。"
             } else {
                 "命令为空，请检查参数是否填写完整"
             }

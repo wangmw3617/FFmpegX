@@ -309,7 +309,7 @@ object Commands {
         require(inputs.size >= 2) { "拼接至少需要两个文件" }
 
         if (spec.useDemuxer) {
-            require(spec.listFilePath.isNotBlank()) { "concat demuxer 模式需要列表文件" }
+            require(spec.listFilePath.isNotBlank()) { "缺少拼接列表文件" }
             return base(settings).apply {
                 // -safe 0：允许列表里出现绝对路径
                 raw("-f", "concat", "-safe", "0")

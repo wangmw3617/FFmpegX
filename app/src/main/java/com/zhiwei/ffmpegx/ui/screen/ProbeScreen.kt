@@ -51,8 +51,8 @@ fun ProbeScreen(viewModel: DeviceViewModel = hiltViewModel()) {
     ) {
         if (!device.ffmpegReady) {
             WarningBanner(
-                title = "ffprobe 不可用",
-                message = device.ffmpegError.ifBlank { "媒体信息依赖 ffprobe，当前 FFmpeg 核心未能加载。" },
+                title = "引擎不可用",
+                message = device.ffmpegError.ifBlank { "转码引擎未能加载，暂时无法读取媒体信息。" },
             )
         }
 
@@ -96,7 +96,6 @@ fun ProbeScreen(viewModel: DeviceViewModel = hiltViewModel()) {
                     video.colorTransfer?.let { InfoRow("色彩传递", it) }
                     if (video.isHdr) InfoRow("HDR", "是")
                     video.nbFrames?.let { InfoRow("总帧数", it.toString()) }
-                    InfoRow("Android MIME", video.mime ?: "无对应类型（无法使用硬件解码）")
                 }
             }
 

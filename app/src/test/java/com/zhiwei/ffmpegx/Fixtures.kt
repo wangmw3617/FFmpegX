@@ -37,7 +37,6 @@ object Fixtures {
         deviceManufacturer = "Test",
         deviceModel = "Test Device",
         isEmulator = false,
-        notes = emptyList(),
         suggestVulkanFilters = suggestVulkan,
     )
 

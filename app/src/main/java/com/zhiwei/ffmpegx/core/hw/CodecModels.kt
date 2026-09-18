@@ -57,21 +57,6 @@ enum class AudioCodec(
     val isLossless: Boolean get() = this == FLAC || this == PCM
 }
 
-/** 硬解/软解在 FFmpeg 侧的解码器策略 */
-enum class DecoderKind(val label: String) {
-    MEDIACODEC("MediaCodec 硬解"),
-    MEDIACODEC_SURFACE("MediaCodec 硬解（Surface 零拷贝）"),
-    SOFTWARE("软件解码"),
-    STREAM_COPY("不重新编码（直通）"),
-}
-
-/** 编码器策略 */
-enum class EncoderKind(val label: String) {
-    MEDIACODEC("MediaCodec 硬编"),
-    SOFTWARE("软件编码"),
-    STREAM_COPY("不重新编码（直通）"),
-}
-
 /**
  * 单个 MediaCodec 编解码器的能力快照。
  * 所有字段都来自 `MediaCodecInfo`，不做任何猜测。
@@ -167,17 +152,4 @@ data class DeviceCodecReport(
     val supportedVideoEncodeTargets: List<VideoCodec>
         get() = VideoCodec.entries.filter { hardwareEncoders(it).isNotEmpty() || it.hasSoftwareEncoder }
 
-    /** 首页展示用的一句话总结 */
-    val summary: String
-        get() {
-            val hwEnc = VideoCodec.entries.filter { hardwareEncoders(it).isNotEmpty() }
-            val hwDec = videoDecoders.count { it.isHardware }
-            return buildString {
-                append("硬件编码器 ").append(hwEnc.size).append(" 类")
-                if (hwEnc.isNotEmpty()) {
-                    append("（").append(hwEnc.joinToString("/") { it.shortLabel }).append("）")
-                }
-                append("；硬件解码器 ").append(hwDec).append(" 个")
-            }
-        }
 }

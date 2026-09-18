@@ -157,7 +157,7 @@ fun HomeScreen(
                 // 不把内部错误（ABI 不匹配、.so 加载失败之类）直接抛给用户，
                 // 那些信息留在「控制台」里供排查，界面上只给出可操作的下一步。
                 message = "当前设备上无法启动转码引擎，暂时不能处理任务。" +
-                    "请尝试重新安装应用；若问题依旧，可在「控制台」查看详细日志。",
+                    "请尝试重新安装应用；若问题依旧，可在「命令」页查看详细日志。",
             )
         }
 
@@ -287,14 +287,15 @@ private fun DeviceCapabilityCard(state: DeviceUiState, onRescan: () -> Unit) {
         },
     ) {
         if (report == null) {
-            Text("正在枚举 MediaCodec…", style = MaterialTheme.typography.bodySmall)
+            Text("正在检测设备能力…", style = MaterialTheme.typography.bodySmall)
             return@SectionCard
         }
 
         InfoRow("芯片平台", report.soc.displayName)
         InfoRow("档位", report.soc.tier.label)
-        InfoRow("FFmpeg", if (state.ffmpegReady) state.ffmpegVersion else "未加载")
-        InfoRow("核心", state.backendName.ifBlank { "—" })
+        // 合并原本的「FFmpeg」与「核心」两行：后者会显示出 ffmpeg-kit-next 这类
+        // 内部库名，对使用者没有意义
+        InfoRow("转码引擎", if (state.ffmpegReady) "FFmpeg ${state.ffmpegVersion}" else "未加载")
 
         Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
             val hwEncoders = VideoCodec.entries.filter { report.hardwareEncoders(it).isNotEmpty() }
@@ -320,26 +321,12 @@ private fun DeviceCapabilityCard(state: DeviceUiState, onRescan: () -> Unit) {
                 AssistChip(onClick = {}, label = { Text("AV1 硬编") })
             }
             if (report.soc.suggestVulkanFilters) {
-                AssistChip(onClick = {}, label = { Text("可尝试 Vulkan 滤镜") })
+                AssistChip(onClick = {}, label = { Text("支持 GPU 画面处理") })
             }
         }
 
         Text(
-            report.summary,
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
-
-        report.soc.notes.forEach { note ->
-            Text(
-                "· $note",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-        }
-
-        Text(
-            "以上能力全部来自运行时 MediaCodecList 枚举，与厂商 ROM 实际开放情况一致。",
+            "以上能力均为本机实测结果。",
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.outline,
         )

@@ -357,14 +357,10 @@ fun HardwarePlanCard(plan: HardwarePlan?, modifier: Modifier = Modifier) {
                 )
             }
 
-            val decoderName = when (val d = plan.decoder) {
-                is DecoderPlan.MediaCodec -> "${d.label}（${d.codecName.substringAfterLast('.')}）"
-                else -> d.label
-            }
-            val encoderName = when (val e = plan.encoder) {
-                is EncoderPlan.MediaCodec -> "${e.label}（${e.codecName.substringAfterLast('.')}）"
-                else -> e.label
-            }
+            // 只显示面向用户的说法。早先在括号里附了 MediaCodec 的编解码器名
+            // （如 `avc`），那是给开发排查用的，对使用者没有意义。
+            val decoderName = plan.decoder.label
+            val encoderName = plan.encoder.label
             InfoRow("解码", decoderName)
             InfoRow("编码", encoderName)
 
@@ -779,10 +775,9 @@ fun displayNameFromInput(input: String): String {
 /** 输入来源的一句话说明，用于替代原始路径副标题 */
 fun inputSourceLabel(input: String, temporary: Boolean = false): String = when {
     input.isBlank() -> ""
-    temporary -> "已复制到应用缓存"
-    input.startsWith("ffkitsaf:", ignoreCase = true) -> "直接读取所选文件"
-    input.startsWith("ffkitmem:", ignoreCase = true) -> "来自内存数据"
-    input.startsWith("ffkitstream:", ignoreCase = true) -> "来自数据流"
+    temporary -> "已复制到本机"
+    // ffkitsaf / ffkitmem / ffkitstream 都是内部协议串，对用户统一表述为
+    // 「已选择的文件」，不再区分直读 / 内存 / 数据流 —— 那是实现细节。
     // 兜底也走文件名而不是完整路径 —— 一长串 /storage/emulated/0/... 对用户没有意义
     else -> displayNameFromInput(input)
 }

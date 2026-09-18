@@ -69,7 +69,7 @@ fun SettingsScreen(viewModel: SettingsViewModel = hiltViewModel()) {
             }
 
             SwitchRow(
-                title = "启用 Vulkan 滤镜链",
+                title = "启用 GPU 画面处理",
                 subtitle = "把缩放、格式转换等处理交给 GPU，可降低 CPU 占用。" +
                     "仅在部分设备上生效，未生效时会自动回退到 CPU 处理。",
                 checked = settings.preferVulkan,
@@ -85,7 +85,7 @@ fun SettingsScreen(viewModel: SettingsViewModel = hiltViewModel()) {
                 selected = settings.threadCount,
                 labelOf = { if (it == 0) "自动（按 CPU 核心数）" else "$it 线程" },
                 onSelect = { viewModel.setThreadCount(it) },
-                supporting = "硬件编码器不使用这个参数，只有软编才会生效",
+                supporting = "仅软件编码使用此参数",
             )
             DropdownField(
                 label = "日志详细程度",
@@ -161,8 +161,7 @@ fun SettingsScreen(viewModel: SettingsViewModel = hiltViewModel()) {
             InfoRow("应用版本", BuildConfig.VERSION_NAME)
             InfoRow("转码引擎版本", nativeLabel)
             Text(
-                "所有处理都在本机完成，不上传任何文件，也不需要联网。" +
-                    "处理时直接读取你选择的文件，不会额外复制一份到缓存。",
+                "所有处理都在本机完成，不上传任何文件，也不需要联网。",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )

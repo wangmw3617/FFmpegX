@@ -156,7 +156,7 @@ data class SubtitleSpec(
 )
 
 enum class SubtitleMode(val label: String, val description: String) {
-    BURN("烧录到画面", "字幕变成画面的一部分，任何播放器都能看到（需 libass）"),
+    BURN("烧录到画面", "字幕变成画面的一部分，任何播放器都能看到"),
     EXTRACT("提取字幕文件", "把内嵌字幕导出为 .srt"),
     MUX("封装外挂字幕", "字幕作为独立轨道，播放器可开关"),
 }

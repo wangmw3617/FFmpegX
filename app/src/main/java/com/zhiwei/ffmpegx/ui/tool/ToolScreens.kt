@@ -147,7 +147,7 @@ fun TrimScreen(vm: ToolViewModel = hiltViewModel()) {
             ChoiceChips(
                 options = listOf(true, false),
                 selected = f.streamCopy,
-                labelOf = { copy -> if (copy) "无损剪切（-c copy）" else "精确重编码" },
+                labelOf = { copy -> if (copy) "无损剪切" else "精确重编码" },
                 onSelect = { copy -> vm.update { form -> form.copy(streamCopy = copy) } },
             )
             Text(
@@ -251,7 +251,7 @@ fun AudioScreen(vm: ToolViewModel = hiltViewModel()) {
                 steps = 24,
                 onValueChange = { vm.update { s -> s.copy(tempo = it.toDouble()) } },
                 valueLabel = { "%.2fx".format(it) },
-                supporting = "变速会改变音调感知，超过 2 倍会自动串联多级 atempo",
+                supporting = "变速会改变音调感知；超过 2 倍时会自动分段处理",
             )
             LabeledSlider(
                 label = "淡入",
@@ -330,7 +330,7 @@ fun GifScreen(vm: ToolViewModel = hiltViewModel()) {
                 Column(Modifier.weight(1f)) {
                     Text("两遍调色板", style = MaterialTheme.typography.bodyMedium)
                     Text(
-                        "先生成专属调色板再合成，渐变与肤色明显更自然（代价是多跑一遍）",
+                        "先生成专属调色板再合成，渐变与肤色更自然（耗时更长）",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
@@ -409,7 +409,7 @@ fun ConcatScreen(vm: ToolViewModel = hiltViewModel()) {
             ChoiceChips(
                 options = listOf(false, true),
                 selected = f.concatUseDemuxer,
-                labelOf = { if (it) "concat demuxer（无损）" else "滤镜重编码（通用）" },
+                labelOf = { if (it) "快速合并（无损）" else "逐帧重编码（通用）" },
                 onSelect = { vm.update { s -> s.copy(concatUseDemuxer = it) } },
             )
             Text(
@@ -502,7 +502,7 @@ fun SubtitleScreen(vm: ToolViewModel = hiltViewModel()) {
                         modifier = Modifier.fillMaxWidth(),
                     )
                     Text(
-                        "留空则使用字幕文件自带的样式。烧录需要 FFmpeg 编译时包含 libass。",
+                        "留空则使用字幕文件自带的样式。",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
@@ -531,7 +531,7 @@ fun SubtitleScreen(vm: ToolViewModel = hiltViewModel()) {
                     selected = f.container,
                     labelOf = { it.label },
                     onSelect = { vm.update { s -> s.copy(container = it) } },
-                    supporting = "MP4 用 mov_text 字幕轨，MKV 用 srt（兼容性更好）",
+                    supporting = "MKV 的字幕兼容性更好",
                 )
             }
         }

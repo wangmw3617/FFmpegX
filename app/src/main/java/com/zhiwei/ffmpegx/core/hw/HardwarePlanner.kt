@@ -7,11 +7,11 @@ enum class HwStrategy(
     val label: String,
     val description: String,
 ) {
-    AUTO("智能", "无滤镜时走零拷贝硬解硬编；有滤镜时硬解 + 软编/硬编自动取舍"),
-    SPEED("速度优先", "解码与编码都优先走 MediaCodec，追求最快出片"),
+    AUTO("智能", "按素材与设备能力自动选择最优方案"),
+    SPEED("速度优先", "优先使用硬件编解码，出片最快"),
     QUALITY("质量优先", "硬件解码 + 软件编码，画质与体积更可控"),
-    COMPAT("兼容优先", "全软编软解，兼容性最好但速度最慢"),
-    OFF("关闭", "完全不使用硬件加速"),
+    COMPAT("兼容优先", "全部使用软件编解码，兼容性最好但速度最慢"),
+    OFF("关闭", "不使用硬件加速"),
     ;
 
     val usesHardware: Boolean get() = this != COMPAT && this != OFF
@@ -29,15 +29,12 @@ sealed interface DecoderPlan {
     data object StreamCopy : DecoderPlan
     data object None : DecoderPlan
 
+    /** 面向用户的说法：不出现 MediaCodec / Surface 这类内部术语 */
     val label: String
         get() = when (this) {
-            is MediaCodec -> if (outputSurface) {
-                "MediaCodec 硬解（Surface 零拷贝）"
-            } else {
-                "MediaCodec 硬解"
-            }
+            is MediaCodec -> if (outputSurface) "硬件解码（直通）" else "硬件解码"
             Software -> "软件解码"
-            StreamCopy -> "不重新编码（直通）"
+            StreamCopy -> "不重新编码"
             None -> "无视频流"
         }
 }
@@ -51,11 +48,12 @@ sealed interface EncoderPlan {
     /** 既没有硬件编码器也没有可用的软件编码器 */
     data object Unavailable : EncoderPlan
 
+    /** 面向用户的说法：不出现 MediaCodec / 编码器名这类内部术语 */
     val label: String
         get() = when (this) {
-            is MediaCodec -> "MediaCodec 硬编"
-            is Software -> "软件编码（$ffmpegName）"
-            StreamCopy -> "不重新编码（直通）"
+            is MediaCodec -> "硬件编码"
+            is Software -> "软件编码"
+            StreamCopy -> "不重新编码"
             None -> "无视频流"
             Unavailable -> "无可用编码器"
         }
@@ -101,7 +99,7 @@ data class HardwarePlan(
 
     val badge: String
         get() = when {
-            isZeroCopy -> "零拷贝硬解硬编"
+            isZeroCopy -> "硬解 + 硬编（直通）"
             decoder is DecoderPlan.MediaCodec && encoder is EncoderPlan.MediaCodec -> "硬解 + 硬编"
             decoder is DecoderPlan.MediaCodec -> "硬解 + 软编"
             encoder is EncoderPlan.MediaCodec -> "软解 + 硬编"
@@ -180,8 +178,7 @@ object HardwarePlanCalculator {
         val hwEncoderAvailable = ffmpegEncoders.isEmpty() ||
             ffmpegEncoders.contains(request.targetCodec.mcName)
         if (!hwEncoderAvailable && !qualityFirst) {
-            warnings += "当前 FFmpeg 构建不含 ${request.targetCodec.mcName}，" +
-                "硬件编码不可用，已改用软件编码。"
+            warnings += "硬件编码不可用，已改用软件编码。"
         }
 
         val hwEncoder = if (qualityFirst || !hwEncoderAvailable) {
@@ -198,7 +195,7 @@ object HardwarePlanCalculator {
 
         val encoder: EncoderPlan = when {
             qualityFirst && request.targetCodec.hasSoftwareEncoder -> {
-                reasons += "「质量优先」策略：主动跳过硬件编码器，改用 ${request.targetCodec.swName}。"
+                reasons += "「质量优先」：已改用软件编码，画质与体积更可控。"
                 EncoderPlan.Software(request.targetCodec.swName!!)
             }
 
@@ -215,8 +212,7 @@ object HardwarePlanCalculator {
                 } else {
                     null
                 }
-                warnings += "${request.targetCodec.shortLabel} 没有可用的软件编码器，" +
-                    "「质量优先」无法生效，仍使用硬件编码。"
+                warnings += "该格式没有可用的软件编码器，「质量优先」无法生效，仍使用硬件编码。"
                 if (fallback != null) {
                     EncoderPlan.MediaCodec(request.targetCodec.mcName, fallback.codecName)
                 } else {
@@ -225,19 +221,17 @@ object HardwarePlanCalculator {
             }
 
             hwEncoder == null && request.targetCodec.hasSoftwareEncoder -> {
-                warnings += "未找到能处理 ${request.targetWidth}×${request.targetHeight}" +
-                    "@${formatFps(request.targetFps)} 的 ${request.targetCodec.shortLabel} 硬件编码器，回落到软件编码。"
+                warnings += "该分辨率与帧率超出硬件编码器能力范围，已改用软件编码。"
                 softwareEncoder(request.targetCodec, warnings)
             }
 
             hwEncoder == null -> {
-                warnings += "${request.targetCodec.shortLabel} 既没有可用的硬件编码器，" +
-                    "当前 FFmpeg 构建也没有包含对应的软件编码器。请改用 H.264，或重新编译 FFmpeg 时启用相应 --enable-lib*。"
+                warnings += "该格式没有可用的编码器。请改用 H.264。"
                 EncoderPlan.Unavailable
             }
 
             else -> {
-                reasons += "编码器选用 ${hwEncoder.codecName}（上限 ${hwEncoder.maxResolutionLabel}）。"
+                reasons += "已启用硬件编码（最高支持 ${hwEncoder.maxResolutionLabel}）。"
                 EncoderPlan.MediaCodec(
                     ffmpegName = request.targetCodec.mcName,
                     codecName = hwEncoder.codecName,
@@ -258,19 +252,19 @@ object HardwarePlanCalculator {
 
         val decoder: DecoderPlan = when {
             hwDecoder == null && sourceMime != null -> {
-                reasons += "源格式 $sourceMime 没有匹配的硬件解码器，使用软件解码。"
+                reasons += "该视频格式不支持硬件解码，已改用软件解码。"
                 DecoderPlan.Software
             }
             hwDecoder == null -> DecoderPlan.Software
             else -> {
                 if (canZeroCopy) {
-                    reasons += "解码/编码同为 MediaCodec 且无 CPU 滤镜，启用零拷贝通路（帧不出显存）。"
+                    reasons += "解码与编码均使用硬件，且无需逐帧处理，已启用直通模式。"
                 } else {
                     val why = when {
-                        request.hasCpuVideoFilters -> "存在 CPU 端视频滤镜，帧需要下载到内存"
-                        else -> "编码器不是 MediaCodec"
+                        request.hasCpuVideoFilters -> "需要逐帧处理画面"
+                        else -> "编码未使用硬件"
                     }
-                    reasons += "使用 MediaCodec 硬解（$why，已自动关闭 Surface 输出）。"
+                    reasons += "使用硬件解码（$why）。"
                 }
                 DecoderPlan.MediaCodec(
                     codecName = hwDecoder.codecName,
@@ -300,9 +294,9 @@ object HardwarePlanCalculator {
             // 不能再叠加 !hasCpuVideoFilters —— 只要出现 -vf 它必然为真，
             // 叠加后条件恒为 false，这里就永远走 else，Vulkan 通路永远开不起来。
             if (request.isPureScale) {
-                reasons += "已启用 Vulkan 滤镜链处理缩放（需要 FFmpeg 编译时带 --enable-vulkan）。"
+                reasons += "已启用 GPU 加速的画面缩放。"
             } else {
-                warnings += "当前处理链包含非缩放滤镜，Vulkan 通路无法整体接管，已回退到 CPU 滤镜。"
+                warnings += "当前处理包含缩放以外的操作，GPU 无法接管，已回退到常规处理。"
             }
         }
 
@@ -327,7 +321,7 @@ object HardwarePlanCalculator {
         return if (sw != null) {
             EncoderPlan.Software(sw)
         } else {
-            warnings += "${codec.shortLabel} 在当前 FFmpeg 构建中没有软件编码器。"
+            warnings += "该格式没有可用的软件编码器。"
             EncoderPlan.Unavailable
         }
     }
@@ -360,14 +354,11 @@ object HardwarePlanCalculator {
             args += listOf("-maxrate", (request.targetBitrate * 3 / 2).toString())
             args += listOf("-bufsize", (request.targetBitrate * 2).toString())
         } else {
-            warnings += "未指定目标码率，硬件编码器将使用默认码率，输出体积可能不符合预期。"
+            warnings += "未指定目标码率，输出体积可能不符合预期。"
         }
 
         args += listOf("-bf", "0")
 
         return args
     }
-
-    private fun formatFps(fps: Double): String =
-        if (fps <= 0) "自动" else String.format("%.2f", fps)
 }

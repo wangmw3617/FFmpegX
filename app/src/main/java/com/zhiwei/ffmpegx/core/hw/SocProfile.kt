@@ -43,8 +43,6 @@ data class SocProfile(
     val deviceManufacturer: String,
     val deviceModel: String,
     val isEmulator: Boolean,
-    /** 该平台的调优说明，展示在首页「设备与硬件加速」卡片里 */
-    val notes: List<String>,
     /** 是否建议默认开启 Vulkan 滤镜链（需要 libplacebo 级别的滤镜时才真正有价值） */
     val suggestVulkanFilters: Boolean,
 ) {
@@ -172,50 +170,8 @@ data class SocProfile(
                 deviceManufacturer = manufacturer,
                 deviceModel = Build.MODEL.orEmpty(),
                 isEmulator = isEmulator,
-                notes = buildNotes(vendor, tier, isEmulator),
                 suggestVulkanFilters = tier == SocTier.FLAGSHIP && !isEmulator,
             )
-        }
-
-        private fun buildNotes(vendor: SocVendor, tier: SocTier, isEmulator: Boolean): List<String> {
-            if (isEmulator) {
-                return listOf(
-                    "当前运行在模拟器上，MediaCodec 走的是软件模拟实现，",
-                    "硬件加速开关不会有实际收益，建议用真机验证性能。",
-                )
-            }
-            return when (vendor) {
-                SocVendor.QUALCOMM -> listOf(
-                    "编码器通常以 c2.qti.* 开头，骁龙 8 Gen 2 及之后支持 AV1 硬解，8 Gen 3 起部分机型开放 AV1 硬编。",
-                    "MediaCodec 编码对 GOP 敏感，建议关键帧间隔设为帧率的 1~2 倍。",
-                )
-                SocVendor.MEDIATEK -> listOf(
-                    "编码器通常以 c2.mtk.* 开头，天玑 9200 起支持 AV1 硬编，9000 起支持 AV1 硬解。",
-                    "部分天玑平台的 HEVC 硬编在 4K 下对码率上限较敏感，超出会回落到软编。",
-                )
-                SocVendor.SAMSUNG -> listOf(
-                    "Exynos 平台编码器常见 c2.exynos.* / OMX.Exynos.*，AV1 硬解自 Exynos 2200 起。",
-                    "部分三星 ROM 对第三方 App 的硬件编码器开放有限，请以本页枚举结果为准。",
-                )
-                SocVendor.GOOGLE -> listOf(
-                    "Tensor 平台的编解码器多来自三星 MFC，命名常为 c2.gs.* 或 c2.exynos.*。",
-                    "Tensor 系列 AV1 硬解支持较好，硬编能力请以枚举结果为准。",
-                )
-                SocVendor.HISILICON -> listOf(
-                    "麒麟平台编码器常见 OMX.hisi.* / c2.hisi.*，能力随 ROM 版本差异较大。",
-                )
-                SocVendor.UNISOC -> listOf(
-                    "展锐平台硬件编解码能力较弱，建议对高分辨率素材使用软编以保证画质。",
-                )
-                SocVendor.NVIDIA -> listOf("Tegra 平台多见于平板/车机，编码器为 c2.nvidia.*。")
-                SocVendor.UNKNOWN -> listOf(
-                    "未能识别芯片平台，将完全依赖 MediaCodec 运行时枚举结果。",
-                )
-            } + if (tier == SocTier.FLAGSHIP) {
-                listOf("识别为旗舰档位，可尝试开启 Vulkan 滤镜链以降低高分辨率缩放/叠加的功耗。")
-            } else {
-                emptyList()
-            }
         }
     }
 }
