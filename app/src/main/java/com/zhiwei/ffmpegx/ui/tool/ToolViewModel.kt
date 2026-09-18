@@ -433,7 +433,10 @@ class ToolViewModel @Inject constructor(
     fun onPickSubtitle(uri: Uri) {
         viewModelScope.launch {
             _state.update { it.copy(busy = true, busyMessage = "正在读取字幕…") }
-            FileResolver.resolve(context, uri).fold(
+            // 必须要求真实文件：烧录走的 subtitles 滤镜把路径交给 libass，
+            // 而 libass 用普通 stdio 自己 fopen 读文件，不认 ffkitsaf: 协议。
+            // 走直读的话拿到的 url 既进不了滤镜、也无法被 libass 打开。
+            FileResolver.resolve(context, uri, requireRealFile = true).fold(
                 onSuccess = { r ->
                     subtitleResolved?.let { releaseResolved(it) }
                     subtitleResolved = r

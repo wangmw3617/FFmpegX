@@ -50,10 +50,20 @@ object FileResolver {
         val realPath: String? get() = file?.absolutePath
     }
 
+    /**
+     * @param requireRealFile true 表示**必须**拿到真实文件路径，必要时复制到缓存，
+     *        不使用 `ffkitsaf:` 直读。
+     *
+     *        字幕（`subtitles` 滤镜）是唯一的强制场景：该滤镜把路径交给 libass，
+     *        而 libass 用普通 stdio 自己 fopen 读文件，**不走 FFmpeg 的 avio 协议层**，
+     *        因此不认 `ffkitsaf:` 这类自定义协议。字幕文件通常只有几十 KB，
+     *        复制一份的代价可以忽略，换来的是这条路必然可用。
+     */
     suspend fun resolve(
         context: Context,
         uri: Uri,
         onProgress: (copiedBytes: Long, totalBytes: Long) -> Unit = { _, _ -> },
+        requireRealFile: Boolean = false,
     ): Result<Resolved> = withContext(Dispatchers.IO) {
         runCatching {
             when (uri.scheme?.lowercase()) {
@@ -63,7 +73,7 @@ object FileResolver {
                     Resolved(f.absolutePath, f, false, f.name, f.length())
                 }
 
-                else -> resolveContentUri(context, uri, onProgress)
+                else -> resolveContentUri(context, uri, onProgress, requireRealFile)
             }
         }.onFailure { Log.e(TAG, "解析 $uri 失败", it) }
     }
@@ -82,11 +92,13 @@ object FileResolver {
         context: Context,
         uri: Uri,
         onProgress: (Long, Long) -> Unit,
+        requireRealFile: Boolean,
     ): Resolved {
         val meta = queryMeta(context, uri)
 
-        // 优先：ffkitsaf: 直读，完全不落地
-        if (FFmpegNative.supportsSaf) {
+        // 优先：ffkitsaf: 直读，完全不落地。
+        // requireRealFile 时跳过 —— 见 resolve() 的说明（libass 不认自定义协议）。
+        if (!requireRealFile && FFmpegNative.supportsSaf) {
             // 必须用 reusable = true。
             //
             // 上游语义：reusable=false 表示「文件关闭时自动注销该 url」。
