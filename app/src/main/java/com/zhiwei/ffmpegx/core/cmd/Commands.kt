@@ -463,10 +463,18 @@ object Commands {
 
             OverlayMode.SIDE_BY_SIDE, OverlayMode.TOP_BOTTOM -> {
                 val edge = spec.stackEdge.coerceAtLeast(144)
-                val stack = if (spec.mode == OverlayMode.SIDE_BY_SIDE) "hstack" else "vstack"
+                val isSideBySide = spec.mode == OverlayMode.SIDE_BY_SIDE
+                // hstack 要求所有输入**同高**，vstack 要求**同宽** —— 两者必须沿不同的轴归一化。
+                //
+                // 早先两种模式都写 `scale=-2:edge`（只统一高度），于是左右分屏正常，
+                // 上下分屏只要两个素材宽高比不同就必然失败：
+                //   Failed to inject frame into filter network: Invalid argument
+                // 原因正是宽度不一致（4:3 缩到 480x360、16:9 缩到 640x360）。
+                val scale = if (isSideBySide) "scale=-2:$edge" else "scale=$edge:-2"
+                val stack = if (isSideBySide) "hstack" else "vstack"
                 filterComplex = buildString {
-                    append("[0:v]scale=-2:").append(edge).append(",setsar=1[a];")
-                    append("[1:v]scale=-2:").append(edge).append(",setsar=1[b];")
+                    append("[0:v]").append(scale).append(",setsar=1[a];")
+                    append("[1:v]").append(scale).append(",setsar=1[b];")
                     append("[a][b]").append(stack).append("=inputs=2[v]")
                 }
                 maps = listOf("[v]", "0:a:0?")

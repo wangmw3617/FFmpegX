@@ -484,13 +484,14 @@ class CommandsTest {
             ),
         )
         val fc = args.valueOf("-filter_complex")!!
+        // hstack 要求同高 → 沿高度归一化
         assertTrue(fc.contains("[0:v]scale=-2:720,setsar=1[a]"))
         assertTrue(fc.contains("[1:v]scale=-2:720,setsar=1[b]"))
         assertTrue(fc.contains("hstack=inputs=2[v]"))
     }
 
     @Test
-    fun `上下分屏生成 vstack`() {
+    fun `上下分屏生成 vstack 并统一宽度`() {
         val args = Commands.overlay(
             settings, plan, "/a.mp4",
             OverlaySpec(
@@ -502,7 +503,13 @@ class CommandsTest {
                 audio = null,
             ),
         )
-        assertTrue(args.valueOf("-filter_complex")!!.contains("vstack=inputs=2[v]"))
+        val fc = args.valueOf("-filter_complex")!!
+        // vstack 要求同宽 → 必须沿宽度归一化。
+        // 这里刻意断言具体写法：只断言「含 vstack」是不够的 ——
+        // 两种模式沿错轴归一化时仍会生成 vstack，但运行时必然失败。
+        assertTrue(fc.contains("[0:v]scale=1080:-2,setsar=1[a]"))
+        assertTrue(fc.contains("[1:v]scale=1080:-2,setsar=1[b]"))
+        assertTrue(fc.contains("vstack=inputs=2[v]"))
     }
 
     // ================================================================ 音频 ====
