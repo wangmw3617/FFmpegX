@@ -630,13 +630,21 @@ class CommandsTest {
     }
 
     @Test
-    fun `滤镜路径里的特殊字符会被转义`() {
-        // SAF 的卷 ID 里可能带冒号，不转义会把滤镜串切坏
-        assertEquals("a\\:b", Commands.escapeFilterPath("a:b"))
-        assertEquals("a\\\\b", Commands.escapeFilterPath("a\\b"))
-        assertEquals("a\\'b", Commands.escapeFilterPath("a'b"))
+    fun `滤镜路径里的特殊字符按各自层数转义`() {
+        // filtergraph 要过两层解析（graph parser → option parser），每层消费一个反斜杠，
+        // 所以「两层都特殊」的字符必须写成两层反斜杠。
+        //
+        // 层数是逐个用真实 ffmpeg 的 subtitles 滤镜实测出来的，**不能统一处理**：
+        // 早先对所有字符一律给 1 层，导致 SAF 路径（`ffkitsaf:` 带冒号）必然失败，
+        // 报 `Unable to parse option value "..." as image size`。
+        assertEquals("a\\\\:b", Commands.escapeFilterPath("a:b"))        // 冒号 2 层
+        assertEquals("a\\\\\\\\b", Commands.escapeFilterPath("a\\b"))    // 反斜杠 4 层
+        assertEquals("a\\\\\\'b", Commands.escapeFilterPath("a'b"))      // 单引号 3 层
+
+        // 这四个只在 graph parser 那一层特殊，1 层就够（给 2 层反而会把文件名写坏）
         assertEquals("a\\,b", Commands.escapeFilterPath("a,b"))
         assertEquals("a\\[b\\]", Commands.escapeFilterPath("a[b]"))
+        assertEquals("a\\;b", Commands.escapeFilterPath("a;b"))
     }
 
     @Test

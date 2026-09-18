@@ -933,23 +933,38 @@ object Commands {
 
     /**
      * filtergraph 里的路径转义。
-     * 冒号、反斜杠、单引号、方括号、逗号在 filter 语法里有特殊含义，必须转义，
-     * 否则路径里带 `:` 的（比如 SAF 卷 ID）会直接把滤镜串切坏。
+     *
+     * filtergraph 的字符串要经过**两层**解析：先由 graph parser 按 `,` `;` `[` `]`
+     * 切分滤镜链，再由 option parser 按 `:` 切分「选项名=值」。每层都会消费掉一个
+     * 反斜杠，所以「在两层里都特殊」的字符必须写成**两层反斜杠**。
+     *
+     * 各字符实测所需层数（FFmpeg 6.0，逐个用 subtitles 滤镜验证）：
+     *
+     * ```
+     *   字符             层数   只写 1 层时的实际后果
+     *   :                2     Unable to parse option value "vol" as image size
+     *   '                3     引号被吞：quote's.srt → quotes.srt
+     *   \                4     反斜杠丢失
+     *   ,  [  ]  ;       1     正常
+     * ```
+     *
+     * ⚠️ 不要改回「统一加一层」的写法 —— 各字符层数不同，统一处理正是早先版本
+     * 在 SAF 路径（`ffkitsaf:` 带冒号）上必然失败的原因。
      */
     fun escapeFilterPath(path: String): String {
-        val sb = StringBuilder(path.length + 8)
+        val sb = StringBuilder(path.length + 16)
         for (ch in path) {
             when (ch) {
-                '\\' -> sb.append("\\\\")
-                ':' -> sb.append("\\:")
-                '\'' -> sb.append("\\'")
-                ',' -> sb.append("\\,")
-                '[' -> sb.append("\\[")
-                ']' -> sb.append("\\]")
-                ';' -> sb.append("\\;")
+                // 层数见上方表格。用 repeat 写出来，比一串反斜杠字面量可读得多
+                '\\' -> sb.append(BACKSLASH.repeat(4))
+                ':' -> sb.append(BACKSLASH.repeat(2)).append(ch)
+                '\'' -> sb.append(BACKSLASH.repeat(3)).append(ch)
+                ',', '[', ']', ';' -> sb.append(BACKSLASH).append(ch)
                 else -> sb.append(ch)
             }
         }
         return sb.toString()
     }
+
+    private const val BACKSLASH = "\\"
 }
