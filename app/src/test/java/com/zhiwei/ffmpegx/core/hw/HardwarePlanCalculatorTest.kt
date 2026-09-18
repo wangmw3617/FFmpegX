@@ -38,7 +38,8 @@ class HardwarePlanCalculatorTest {
         )
         assertTrue(plan.encoder is EncoderPlan.MediaCodec)
         assertEquals("h264_mediacodec", (plan.encoder as EncoderPlan.MediaCodec).ffmpegName)
-        assertEquals("零拷贝硬解硬编", plan.badge)
+        // 徽标面向用户，不出现「零拷贝」这类内部说法
+        assertEquals("硬解 + 硬编（直通）", plan.badge)
     }
 
     @Test
@@ -246,9 +247,12 @@ class HardwarePlanCalculatorTest {
             plan.encoder is EncoderPlan.Software,
         )
         assertEquals("libx264", (plan.encoder as EncoderPlan.Software).ffmpegName)
+        // 原断言查的是警告里有没有 `h264_mediacodec`，目的是让用户能看出
+        // 「是包缺库」而不是「设备不支持」。但那个名字是内部标识符，不该出现在
+        // 用户可见文案里，所以改成查「当前版本不含」—— 保留了同一层诊断含义。
         assertTrue(
-            "应当给出可读原因，便于用户判断是不是包的问题",
-            plan.warnings.any { it.contains("h264_mediacodec") },
+            "应当给出可读原因，让用户能判断是不是包的问题",
+            plan.warnings.any { it.contains("当前版本不含") },
         )
     }
 

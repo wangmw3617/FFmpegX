@@ -178,7 +178,10 @@ object HardwarePlanCalculator {
         val hwEncoderAvailable = ffmpegEncoders.isEmpty() ||
             ffmpegEncoders.contains(request.targetCodec.mcName)
         if (!hwEncoderAvailable && !qualityFirst) {
-            warnings += "硬件编码不可用，已改用软件编码。"
+            // 说「当前版本不含」而不是「硬件不支持」：设备可能是支持的，
+            // 缺的是构建时的开关。这样既不暴露 h264_mediacodec 这类内部名，
+            // 又保住了原来的诊断价值（能看出是包的问题而不是设备的问题）。
+            warnings += "当前版本不含该格式的硬件编码，已改用软件编码。"
         }
 
         val hwEncoder = if (qualityFirst || !hwEncoderAvailable) {
@@ -221,12 +224,12 @@ object HardwarePlanCalculator {
             }
 
             hwEncoder == null && request.targetCodec.hasSoftwareEncoder -> {
-                warnings += "该分辨率与帧率超出硬件编码器能力范围，已改用软件编码。"
+                warnings += "该分辨率与帧率超出硬件编码器能力范围，已回落到软件编码。"
                 softwareEncoder(request.targetCodec, warnings)
             }
 
             hwEncoder == null -> {
-                warnings += "该格式没有可用的编码器。请改用 H.264。"
+                warnings += "${request.targetCodec.shortLabel} 没有可用的编码器，请改用 H.264。"
                 EncoderPlan.Unavailable
             }
 
@@ -252,7 +255,7 @@ object HardwarePlanCalculator {
 
         val decoder: DecoderPlan = when {
             hwDecoder == null && sourceMime != null -> {
-                reasons += "该视频格式不支持硬件解码，已改用软件解码。"
+                reasons += "源格式没有匹配的硬件解码器，已改用软件解码。"
                 DecoderPlan.Software
             }
             hwDecoder == null -> DecoderPlan.Software
