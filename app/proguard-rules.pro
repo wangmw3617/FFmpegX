@@ -55,16 +55,19 @@
 -renamesourcefileattribute SourceFile
 
 # =============================================================================
-#  org.xmlpull.v1（kxml2 带进来的，已在 build.gradle.kts 里排掉 kxml2）
+#  org.xmlpull（xpp3 带进来的）
 #
-#  真正修掉这问题的是 app/build.gradle.kts 里 `exclude kxml2` 那几行 ——
-#  Android 平台自带 org.xmlpull.v1.*，两份同时进 dex 会让 release 的 R8 报：
+#  真正修掉这问题的是 app/build.gradle.kts 里 `exclude org.ogce:xpp3` 那几行。
+#
+#  ⚠️ 这里**只能写 -dontwarn，绝对不能写 -keep**。
+#  `-keep class org.xmlpull.**` 会把这些类标成 keep root，等于强行把它们
+#  拉进 program class —— 那正是 R8 报错的成因：
 #    Library class android.content.res.XmlResourceParser
 #    implements program class org.xmlpull.v1.XmlPullParser
+#  我第一版就是这么写错的，结果 release 依旧失败（CI 35443572069）。
+#  这类 API 是**平台提供的**，正确做法是让 R8 把它当 library class，
+#  所以只需要消除「找不到类」的警告，不要 keep。
 #
-#  下面两行是**兜底**：万一将来某个依赖又把 xmlpull 拖回来，这里保证
-#  R8 不会因为「库类/程序类」判定而失败，同时缺类也只是一条警告。
-#  注意不能只写 -dontwarn —— 那是把错误藏起来，不是修掉。
+#  换 webdav 库或升级 dav4jvm 后，这段可以一起删掉。
 # =============================================================================
 -dontwarn org.xmlpull.**
--keep class org.xmlpull.** { *; }
