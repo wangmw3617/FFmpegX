@@ -11,6 +11,7 @@ import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.BlendMode
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.drawscope.DrawScope
+import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.util.fastCoerceIn
 import kotlinx.coroutines.CoroutineScope
@@ -193,7 +194,11 @@ private fun DrawScope.drawRuntimeHighlight(
     // ② 再叠着色器光斑
     runtimeShader.apply {
         setFloatUniform("size", size.width, size.height)
-        setColorUniform("color", Color.White.copy(alpha = 0.15f * progress))
+        // ⚠️ `setColorUniform` 要的是 `android.graphics.Color` 那种 **ARGB Int**，
+        // 不是 Compose 的 `Color`（value class）。三个重载分别是
+        // (String, Color-android) / (String, Int) / (String, Long)，
+        // 传 Compose 的 Color 会三个全不匹配。必须 `.toArgb()` 转一次。
+        setColorUniform("color", Color.White.copy(alpha = 0.15f * progress).toArgb())
         // 半径取短边的 1.5 倍：足够把整个控件包住，不会看到光斑的边界
         setFloatUniform("radius", size.minDimension * 1.5f)
         // 夹进控件范围，否则拖到底栏外面时着色器会算到控件外的像素

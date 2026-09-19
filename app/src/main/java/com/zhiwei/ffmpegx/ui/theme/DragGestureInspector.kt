@@ -48,11 +48,12 @@ suspend fun PointerInputScope.inspectDragGestures(
 ) {
     awaitEachGesture {
         // Initial 阶段先探一下，保证在别人消费事件前就拿到按下点
-        val initialDown = awaitFirstDown(false, PointerEventPass.Initial)
-        val down = awaitFirstDown(false)
+        awaitFirstDown(requireUnconsumed = false, pass = PointerEventPass.Initial)
+
+        val down = awaitFirstDown(requireUnconsumed = false)
         onDragStart(down)
         onDrag(down, Offset.Zero)
-        val upEvent = down.drag(pointerId = down.id, onDrag = { onDrag(it, it.positionChange()) })
+        val upEvent = drag(pointerId = down.id, onDrag = { onDrag(it, it.positionChange()) })
         if (upEvent == null) {
             onDragCancel()
         } else {
@@ -61,8 +62,19 @@ suspend fun PointerInputScope.inspectDragGestures(
     }
 }
 
-/** 跟踪某个指针直到抬起，期间把每次位移交给 [onDrag]。返回抬起事件；中途丢失则返回 null。 */
-private suspend inline fun AwaitPointerEventScope.drag(
+/**
+ * 跟踪某个指针直到抬起，期间把每次位移交给 [onDrag]。返回抬起事件；中途丢失则返回 null。
+ *
+ * ⚠️ **这里刻意不加 `inline`**（上游那份是 `private suspend inline fun`）。
+ * `AwaitPointerEventScope` 的挂起成员/扩展函数是 Compose 的**受限挂起函数**，
+ * `inline` 会让编译器用「受限协程作用域」规则去校验调用点，而调用点位于
+ * `awaitEachGesture { }` 内部 —— 两个隐式接收者叠加时容易触发
+ * 「Restricted suspending functions can invoke member or extension suspending
+ * functions only on their restricted coroutine scope」。
+ * 去掉 `inline` 后按普通挂起函数处理，规则简单且行为一致；
+ * 这点性能开销（一次非内联调用）在每帧最多几次的拖动手势里可以忽略。
+ */
+private suspend fun AwaitPointerEventScope.drag(
     pointerId: PointerId,
     onDrag: (PointerInputChange) -> Unit,
 ): PointerInputChange? {
@@ -80,8 +92,12 @@ private suspend inline fun AwaitPointerEventScope.drag(
     }
 }
 
-/** 等一个「发生位移」或「抬起」的事件。 */
-private suspend inline fun AwaitPointerEventScope.awaitDragOrUp(
+/**
+ * 等一个「发生位移」或「抬起」的事件。
+ *
+ * 同样刻意不加 `inline`，理由见 [drag] 上方。
+ */
+private suspend fun AwaitPointerEventScope.awaitDragOrUp(
     pointerId: PointerId,
 ): PointerInputChange? {
     var pointer = pointerId
