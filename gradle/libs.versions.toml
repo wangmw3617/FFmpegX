@@ -1,35 +1,48 @@
 [versions]
-agp = "8.10.1"
-# ⚠️ Kotlin 的版本不是随便选的，它被 Liquid Glass 依赖钉住了上限。
+# =============================================================================
+#  ⚠️ 整条链是**联动**的，任何一项单独升都会崩。改动前先读完这一段。
 #
-# Kotlin 元数据**不向下兼容**：依赖是用 Kotlin X 编的，消费者编译器就得 ≥X。
-# 直接看依赖 POM 里的 kotlin-stdlib 版本就知道它要多少：
+#  依赖链：AGP ← Gradle / Kotlin(KGP) ← KSP / Hilt ；backdrop ← Kotlin + shapes
 #
-#   backdrop 1.0.0 / 1.0.1 / 1.0.2   ->  2.2.21   （且不依赖 shapes）
-#   backdrop 1.0.3 / 1.0.4           ->  2.3.0
-#   backdrop 1.0.5                   ->  2.3.0    + shapes 1.0.0
-#   backdrop 1.0.6                   ->  2.3.10   + shapes 1.2.0
-#   backdrop 2.0.0 / 2.0.1           ->  2.3.21 / 2.4.10
+#  硬约束（都已实测核对，不是猜的）：
 #
-# 取 **1.0.2**：它是唯一「Kotlin 2.2.21 + 不带 shapes」的版本，于是
-# Kotlin 可以停在 2.2.21，Hilt 也就不用动（见下）。
+#  1. Kotlin 元数据**不向下兼容**：依赖用 Kotlin X 编的，消费者编译器必须 ≥X。
+#     看依赖 POM 里的 kotlin-stdlib 版本就知道它要多少：
 #
-# 为什么不用 1.0.6：它要求 Kotlin ≥2.3.10，而 Kotlin 2.3 的元数据
-# Hilt 读不了，得升 Hilt；Hilt 2.60 又要求 AGP ≥9.0.0，本项目是 8.10.1。
-# 一条链下来要把 AGP 也换掉，代价远大于收益。
-kotlin = "2.2.21"
-# KSP 2.2 及以前是 <kotlin>-<ksp> 格式；2.3.0 起才改成与 Kotlin 对齐的纯版本号
-ksp = "2.2.21-2.0.4"
+#       backdrop 1.0.0/1.0.1/1.0.2  ->  2.2.21   （且不依赖 shapes）
+#       backdrop 1.0.3/1.0.4        ->  2.3.0
+#       backdrop 1.0.5              ->  2.3.0    + shapes 1.0.0
+#       backdrop 1.0.6              ->  2.3.10   + shapes 1.2.0
+#       backdrop 2.0.0/2.0.1        ->  2.3.21 / 2.4.10
+#
+#  2. shapes 全系都要求 Kotlin ≥2.3.0（1.2.0 起要 2.3.10，1.2.1 要 2.4.10）。
+#     要 backdrop 1.0.6 的折射效果 + 上游同款 Capsule，就必须走 2.3.10 这一档。
+#
+#  3. Hilt 2.60 起要求 AGP ≥9.0.0；AGP 9.0 又要求 Gradle ≥9.1.0。
+#     三者必须一起动，不能只升其中一个。
+#
+#  ⇒ 本组合（Kotlin 2.3.10 + backdrop 1.0.6 + shapes 1.2.0 + Hilt 2.60.1
+#     + AGP 9.0.1 + Gradle 9.x）是能满足上述全部约束的**最低档**组合。
+#     再往上（2.4.10 那档）只会引入更多 AGP 9 的破坏性变更，没有收益。
+# =============================================================================
 
-# Hilt 停在 2.56.2：它内置的 kotlin-metadata-jvm 最高支持元数据 2.2.0，
-# 正好覆盖 Kotlin 2.2.21。再往上（2.57.x -> 2.1.21、2.58/2.59.x -> 2.2.20、
-# 2.60+ -> 2.3.21）都没必要，且 2.60 起要求 AGP ≥9.0.0。
-hilt = "2.56.2"
+agp = "9.0.1"
+kotlin = "2.3.10"
+# KSP 2.2 及以前是 <kotlin>-<ksp> 格式（如 2.2.21-2.0.4）；
+# 2.3.0 起 KSP2 与 Kotlin 解耦，改成独立版本线，对整个 2.3.x 都兼容。
+ksp = "2.3.12"
+
+# Hilt 必须 ≥2.60：2.3.x 的 Kotlin 元数据，旧版 Hilt 内置的 kotlin-metadata-jvm 读不了。
+# 2.60.1 已实测与 AGP 9.0.1 兼容（它引用的 AndroidBasePlugin 在 gradle-api-9.0.1.jar 里）。
+hilt = "2.60.1"
 
 coreKtx = "1.16.0"
 activityCompose = "1.10.1"
 lifecycle = "2.9.0"
-composeBom = "2025.05.00"
+# Compose BOM 跟着 backdrop 1.0.6 走：它依赖 Compose 1.10.3（foundation/ui/ui-graphics），
+# BOM 太旧会让 compose-ui 被顶到不匹配的版本，出现运行期 NoSuchMethodError。
+# 2026.02.00 是提供 compose-ui 1.10.3 的那一档（material3 随之到 1.4.0）。
+composeBom = "2026.02.00"
 navigation = "2.9.0"
 room = "2.8.5"
 datastore = "1.1.7"
@@ -60,25 +73,26 @@ ffmpegKitNext = "9.0.0"
 # ---------------------------------------------------------------------------
 # Liquid Glass（毛玻璃）视觉效果：Kyant0/AndroidLiquidGlass
 #
-# 库名是 backdrop，发布在 Maven Central。它只提供底层绘制原语
-# （Backdrop / drawBackdrop / layerBackdrop），**不含任何高层组件**，
-# 卡片、按钮、导航栏都要自己按它的原语拼。
+# 两个库，配套使用，版本必须匹配：
+#   io.github.kyant0:backdrop  —— 底层绘制原语（Backdrop / drawBackdrop / blur / lens…）
+#   io.github.kyant0:shapes    —— 形状（Capsule / RoundedRectangle…），backdrop 的运行时依赖
 #
-# ⚠️ 为什么停在 1.0.2（各版实测数据，见文件顶部 Kotlin 注释）：
-#    1) 2.0.0 起 AAR 元数据要求 minCompileSdk=37，本项目是 compileSdk 36，
-#       AGP 8.10.1 也不支持 37 → 只能停在 1.x；
-#    2) 1.0.3 ~ 1.0.6 分别要求 Kotlin 2.3.0 / 2.3.10，会把 Hilt 一起顶上去；
-#    3) 1.0.2 要求 Kotlin 2.2.21，且**不依赖 shapes**，AAR 元数据是
-#       minCompileSdk=1 最宽松 —— 唯一能全链路不连锁升版的版本。
+# ⚠️ 升到 1.0.6 的代价与收益（各版实测数据见文件顶部的依赖链注释）：
+#   收益：1.0.6 是上游 catalog 示例所用的 API 档位，`lens` 的 chromaticAberration、
+#         `Highlight.Default`、`rememberCombinedBackdrop` 等都能直接照抄示例代码；
+#         且它自带 shapes，Capsule 可以真用上游同款形状。
+#   代价：要求 Kotlin 2.3.10（连带 KSP / Hilt / AGP / Gradle 全部升级），
+#         并依赖 Compose 1.10.3（composeBom 必须 ≥2026.02.00）。
 #
-# 1.0.2 与 1.0.6 的公开 API 逐项核对过，完全一致：
-#   包名 com.kyant.backdrop(.effects/.backdrops)、drawBackdrop、blur、lens、
-#   vibrancy、rememberLayerBackdrop、layerBackdrop，
-#   以及 `sealed interface BackdropEffectScope : Density`（toPx() 可用）。
-#
-# 顺带：本项目没有用到 shapes（Capsule 等），所以不引这个依赖。
+# 1.0.2 → 1.0.6 的公开 API 逐项核对过，是本文件里少见的**纯增量**升级：
+#   包名 com.kyant.backdrop(.effects/.backdrops/.highlight/.shadow) 不变，
+#   drawBackdrop 仍是 12 参数（shape/effects/highlight/shadow/innerShadow/
+#   layerBlock/onDrawSurface 全在），`sealed interface BackdropEffectScope : Density`。
 # ---------------------------------------------------------------------------
-liquidGlass = "1.0.2"
+liquidGlass = "1.0.6"
+# backdrop 1.0.6 的 javadoc 声明其运行期依赖 shapes 1.2.0；
+# 这里显式声明同样版本，避免被传递依赖解析到别的档位。
+shapes = "1.2.0"
 
 junit = "4.13.2"
 
@@ -132,8 +146,14 @@ junit = { module = "junit:junit", version.ref = "junit" }
 ffmpeg-kit-next = { module = "com.arthenica:ffmpeg-kit-next", version.ref = "ffmpegKitNext" }
 
 # Liquid Glass 效果（见上方 versions 注释）
-# 只引 backdrop。backdrop 1.0.2 不依赖 shapes，本项目也没用到它。
+# 绘制原语：drawBackdrop / lens / vibrancy / Highlight / Shadow 都在这里。
 kyant-backdrop = { module = "io.github.kyant0:backdrop", version.ref = "liquidGlass" }
+# 形状库。底栏的 `Capsule()` 就来自它（上游同款，见 kyant-shapes 上方的版本注释）。
+# 显式声明是为了：
+#   1) 版本可控（不让传递依赖解析到别的档位）；
+#   2) 代码里能直接 import com.kyant.shapes.Capsule 而不触发「传递依赖不可见」问题
+#      —— 这个坑本项目踩过（okio 那次，见 libs.versions.toml 里 okio 的注释）。
+kyant-shapes = { module = "io.github.kyant0:shapes", version.ref = "shapes" }
 
 [plugins]
 android-application = { id = "com.android.application", version.ref = "agp" }

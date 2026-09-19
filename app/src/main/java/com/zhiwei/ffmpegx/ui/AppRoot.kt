@@ -4,27 +4,16 @@ import android.Manifest
 import android.os.Build
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.animation.core.Spring
-import androidx.compose.animation.core.animateFloatAsState
-import androidx.compose.animation.core.spring
-import androidx.compose.foundation.clickable
-import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
-import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.navigationBars
-import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.windowInsetsPadding
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.List
@@ -44,13 +33,9 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
-import androidx.compose.ui.semantics.Role
-import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextOverflow
@@ -93,7 +78,8 @@ import com.zhiwei.ffmpegx.ui.screen.QueueScreen
 import com.zhiwei.ffmpegx.ui.screen.SettingsScreen
 import com.zhiwei.ffmpegx.ui.screen.TasksViewModel
 import com.zhiwei.ffmpegx.ui.theme.AppBackground
-import com.zhiwei.ffmpegx.ui.theme.liquidGlass
+import com.zhiwei.ffmpegx.ui.theme.LiquidBottomTab
+import com.zhiwei.ffmpegx.ui.theme.LiquidBottomTabs
 import com.zhiwei.ffmpegx.ui.theme.rememberAppBackdrop
 import com.zhiwei.ffmpegx.ui.tool.AudioScreen
 import com.zhiwei.ffmpegx.ui.tool.CompressScreen
@@ -125,9 +111,9 @@ private val TOP_LEVEL_TABS = listOf(
 )
 
 /** 悬浮底栏的高度（不含外留白与手势条内边距） */
-private val BOTTOM_BAR_HEIGHT = 64.dp
-private val BOTTOM_BAR_MARGIN = 10.dp
-private val BOTTOM_BAR_SIDE_MARGIN = 14.dp
+internal val BOTTOM_BAR_HEIGHT = 64.dp
+internal val BOTTOM_BAR_MARGIN = 10.dp
+internal val BOTTOM_BAR_SIDE_MARGIN = 14.dp
 
 @Composable
 fun AppRoot(settings: AppSettings) {
@@ -228,16 +214,18 @@ fun AppRoot(settings: AppSettings) {
 /**
  * 悬浮玻璃底栏。
  *
- * 做成悬浮（左右与底部都留白、四角圆角）而不是通栏贴边：
- * 四周留白能让背景与内容从边上透出来，玻璃的「一片浮在内容之上」的
- * 观感才成立；通栏贴边时玻璃只和屏幕边缘相接，看起来就像一块实心色板。
+ * 做成悬浮（左右与底部都留白、整体是胶囊）而不是通栏贴边：
+ * 四周留白让背景与内容从边上透出来，玻璃「一片浮在内容之上」的观感才成立。
+ *
+ * 结构上分两层容器：
+ *
+ * - **外层**只负责定位与留白（手势条内边距、悬浮空白），不含任何玻璃效果；
+ * - **内层**（[LiquidBottomTabs]）才是玻璃本体，它自己会用 `Capsule()` 画形状。
+ *
+ * 拆开的原因是 `windowInsetsPadding` / `padding` 写在玻璃**外面**时，
+ * 玻璃只覆盖底栏自身那块矩形，不会把外面的留白也涂上 —— 否则会看到
+ * 一圈被玻璃染色、但视觉上没有内容的空白边。
  */
-/** 选中指示器的高度。比槽位矮一档，视觉上才「收」得住。 */
-private val INDICATOR_HEIGHT = 44.dp
-
-/** 指示器相对槽位两侧各收进去多少 */
-private val INDICATOR_INSET = 14.dp
-
 @Composable
 private fun GlassBottomBar(
     navController: NavHostController,
@@ -252,167 +240,97 @@ private fun GlassBottomBar(
         destination?.hasRoute(it.route::class) == true
     }
 
-    BoxWithConstraints(
+    Box(
         modifier
             .fillMaxWidth()
-            // 修饰符顺序有讲究：先避开手势条，再留出悬浮的空白，
-            // 最后才是 liquidGlass —— 它写在内层，玻璃只覆盖底栏本身，
-            // 不会把外面的留白也涂上。
             .windowInsetsPadding(WindowInsets.navigationBars)
-            .padding(horizontal = BOTTOM_BAR_SIDE_MARGIN, vertical = BOTTOM_BAR_MARGIN)
-            .height(BOTTOM_BAR_HEIGHT)
-            .liquidGlass(
-                backdrop = backdrop,
-                shape = RoundedCornerShape(26.dp),
-                blurRadius = 22.dp,
-                lensAmount = 12.dp,
-            ),
+            .padding(horizontal = BOTTOM_BAR_SIDE_MARGIN, vertical = BOTTOM_BAR_MARGIN),
     ) {
-        val tabWidth = maxWidth / TOP_LEVEL_TABS.size
-        val indicatorShape = RoundedCornerShape(percent = 50)
-
-        // 指示器是**底栏里单独的一条滑动胶囊**，而不是每个槽位各自画一个。
-        //
-        // 这是「灵动」的关键：切换标签时它带弹性地从一格滑到另一格，有过程；
-        // 原先每个槽位自己画自己的，效果是「旧的瞬间消失、新的瞬间出现」——
-        // 状态变化没有过程，就只剩一个开关。
-        val slide by animateFloatAsState(
-            targetValue = if (selectedIndex >= 0) selectedIndex.toFloat() else 0f,
-            animationSpec = spring(
-                dampingRatio = 0.68f,
-                stiffness = Spring.StiffnessMediumLow,
-            ),
-            label = "indicatorSlide",
-        )
-
-        if (selectedIndex >= 0) {
-            Box(
-                Modifier
-                    .align(Alignment.CenterStart)
-                    .offset(x = tabWidth * slide + INDICATOR_INSET)
-                    .width(tabWidth - INDICATOR_INSET * 2)
-                    .height(INDICATOR_HEIGHT)
-                    .liquidGlass(
-                        backdrop = backdrop,
-                        shape = indicatorShape,
-                        blurRadius = 10.dp,
-                        lensAmount = 8.dp,
-                    ),
-            )
-        }
-
-        Row(Modifier.fillMaxSize(), verticalAlignment = Alignment.CenterVertically) {
+        LiquidBottomTabs(
+            // 传 getter 而非值：组件内部靠 snapshotFlow 侦听它来同步滑块位置
+            selectedTabIndex = { if (selectedIndex >= 0) selectedIndex else 0 },
+            onTabSelected = { index ->
+                val tab = TOP_LEVEL_TABS.getOrNull(index) ?: return@LiquidBottomTabs
+                if (index == selectedIndex) return@LiquidBottomTabs
+                navController.navigate(tab.route) {
+                    // 一级页面之间是「平级切换」而不是「层层深入」：
+                    // popUpTo(HomeRoute) 保证返回栈里始终只有一层，
+                    // saveState/restoreState 让各页的滚动位置在来回切换后还在。
+                    popUpTo(HomeRoute) { saveState = true }
+                    launchSingleTop = true
+                    restoreState = true
+                }
+            },
+            backdrop = backdrop,
+            tabsCount = TOP_LEVEL_TABS.size,
+            modifier = Modifier.fillMaxWidth().height(BOTTOM_BAR_HEIGHT),
+        ) {
             TOP_LEVEL_TABS.forEachIndexed { index, tab ->
-                val selected = index == selectedIndex
-                GlassTab(
-                    tab = tab,
-                    selected = selected,
-                    badgeCount = if (tab.route == QueueRoute) activeCount else 0,
-                    indicatorShape = indicatorShape,
-                    modifier = Modifier.weight(1f).fillMaxHeight(),
+                LiquidBottomTab(
                     onClick = {
-                        if (!selected) {
-                            navController.navigate(tab.route) {
-                                popUpTo(HomeRoute) { saveState = true }
-                                launchSingleTop = true
-                                restoreState = true
-                            }
+                        val target = TOP_LEVEL_TABS[index]
+                        if (index == selectedIndex) return@LiquidBottomTab
+                        navController.navigate(target.route) {
+                            popUpTo(HomeRoute) { saveState = true }
+                            launchSingleTop = true
+                            restoreState = true
                         }
                     },
-                )
+                ) {
+                    GlassTabContent(
+                        tab = tab,
+                        selected = index == selectedIndex,
+                        badgeCount = if (tab.route == QueueRoute) activeCount else 0,
+                    )
+                }
             }
         }
     }
 }
 
 /**
- * 单个底栏项：只负责内容与点击，不再自己画指示器。
+ * 单个底栏项的**内容**（图标 + 文字 + 角标）。
  *
- * ## 为什么把指示器挪出去
+ * 注意这里只画内容，不含点击区 —— 点击区在 [LiquidBottomTab] 里。
+ * 这个 `content` lambda 会被**组合两次**：
+ * 一次进 ① 底板（可见）、一次进 ② 内容层（`alpha = 0`，只贡献折射）。
+ * 所以这个函数必须满足两个前提：
  *
- * 指示器原先是每个槽位各自画的一个胶囊，尺寸被「图标 + 文字」撑到几乎占满
- * 整个槽位（约 78×50dp，槽位才 64dp 高）。挪到底栏层做成**一条滑动的胶囊**
- * 之后，它可以比内容更小一圈（44dp 高、两侧各收 14dp），也有了滑动的过程。
+ * 1. **不能有副作用**（不能记日志、不能发请求）—— 会被执行两遍；
+ * 2. **不能依赖只有一层才有的状态**（比如按压进度）—— 两层的输入必须一致，
+ *    否则上下两层内容错位，折射就歪了。
+ *    按压反馈通过 [LocalLiquidBottomTabScale] 统一下发给两层，就是这个原因。
  *
- * ## 为什么点击区也要是胶囊
+ * ## 角标为什么用 `BadgedBox`
  *
- * Material 的涟漪**按节点形状裁剪**：节点不带形状时按矩形裁，涟漪铺满后
- * 就是一块方角高亮，与整体的圆形语言冲突。所以点击区套上和指示器同一个胶囊。
- *
- * ## 内容为什么放在点击层外面
- *
- * 胶囊会裁掉超出形状的部分，而角标本来就探出图标顶边一点，跟着一起裁就会被
- * 切掉一块。代价是语义要显式补：内容层清空语义、点击层给出描述，
- * 否则 TalkBack 读不到这个标签页叫什么。
+ * 队列页常有「正在跑的任务」，光靠图标完全看不出来。角标探出图标顶边一点，
+ * 所以内容层**不能整体套 clip**（会被切掉一块）—— 这也是点击区
+ * 单独放在 [LiquidBottomTab] 里的另一个理由。
  */
 @Composable
-private fun GlassTab(
+private fun GlassTabContent(
     tab: TopLevelTab,
     selected: Boolean,
     badgeCount: Int,
-    indicatorShape: Shape,
-    modifier: Modifier = Modifier,
-    onClick: () -> Unit,
 ) {
-    Box(modifier, contentAlignment = Alignment.Center) {
-        // ① 点击层：与指示器同形同高，涟漪不会大出一圈
-        Box(
-            Modifier
-                .fillMaxSize()
-                .padding(vertical = (BOTTOM_BAR_HEIGHT - INDICATOR_HEIGHT) / 2)
-                .clip(indicatorShape)
-                .clickable(role = Role.Tab, onClick = onClick)
-                .semantics { contentDescription = tab.label },
-        )
-
-        // ② 内容层：不参与裁剪，角标可以正常探出
-        val tint = if (selected) {
-            MaterialTheme.colorScheme.primary
-        } else {
-            MaterialTheme.colorScheme.onSurfaceVariant
-        }
-        // 选中时图标轻微放大 —— 让切换有「回应」，而不只是换了个颜色
-        val iconScale by animateFloatAsState(
-            targetValue = if (selected) 1f else 0.86f,
-            animationSpec = spring(dampingRatio = 0.5f, stiffness = Spring.StiffnessMedium),
-            label = "iconScale",
-        )
-        Column(
-            modifier = Modifier.clearAndSetSemantics { },
-            horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.Center,
-        ) {
-            if (badgeCount > 0) {
-                BadgedBox(badge = { Badge { Text(badgeCount.toString()) } }) {
-                    Icon(
-                        tab.icon,
-                        contentDescription = null,
-                        tint = tint,
-                        modifier = Modifier.graphicsLayer {
-                            scaleX = iconScale
-                            scaleY = iconScale
-                        },
-                    )
-                }
-            } else {
-                Icon(
-                    tab.icon,
-                    contentDescription = null,
-                    tint = tint,
-                    modifier = Modifier.graphicsLayer {
-                        scaleX = iconScale
-                        scaleY = iconScale
-                    },
-                )
-            }
-            Spacer(Modifier.height(2.dp))
-            Text(
-                text = tab.label,
-                style = MaterialTheme.typography.labelMedium,
-                color = tint,
-            )
-        }
+    val tint = if (selected) {
+        MaterialTheme.colorScheme.primary
+    } else {
+        MaterialTheme.colorScheme.onSurfaceVariant
     }
+
+    if (badgeCount > 0) {
+        BadgedBox(badge = { Badge { Text(badgeCount.toString()) } }) {
+            Icon(tab.icon, contentDescription = null, tint = tint)
+        }
+    } else {
+        Icon(tab.icon, contentDescription = null, tint = tint)
+    }
+    Text(
+        text = tab.label,
+        style = MaterialTheme.typography.labelMedium,
+        color = tint,
+    )
 }
 
 private fun titleFor(destination: NavDestination?): String = when {

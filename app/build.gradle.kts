@@ -235,8 +235,18 @@ dependencies {
     implementation(libs.androidx.compose.material3)
     implementation(libs.androidx.compose.material.icons.extended)
     // Liquid Glass 视觉效果（Kyant0/AndroidLiquidGlass，库名 backdrop）
-    // 不引 shapes：1.0.2 不依赖它，本项目也没用到（Capsule 等）
+    //
+    // shapes 是 backdrop 1.0.6 的运行期依赖，这里显式声明：
+    // 一方面锁住版本，另一方面让代码里 import com.kyant.shapes.Capsule 有编译期可见性
+    // —— 单纯靠传递依赖的话，Gradle 只保证 runtime 类路径（okio 那次踩过同样的坑）。
+    //
+    // 注：shapes-android:1.2.0 的 runtime 变体声明了依赖
+    // `org.jetbrains.compose.ui:ui:1.10.1`（JetBrains Compose Multiplatform 坐标）。
+    // 已核实它**无害**：该坐标的 androidJvm 变体是**纯转发别名**（files 为空，
+    // 直接依赖 androidx.compose.ui:ui:1.10.2），不会引入第二份 UI 类。
+    // 因此**不要**加 dependencySubstitution 去替换它 —— 没必要，加了反而多一处要维护。
     implementation(libs.kyant.backdrop)
+    implementation(libs.kyant.shapes)
     debugImplementation(libs.androidx.compose.ui.tooling)
 
     implementation(libs.androidx.navigation.compose)

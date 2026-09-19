@@ -51,16 +51,17 @@ import com.kyant.backdrop.effects.vibrancy
  *
  * ## 版本约束
  *
- * 停在 **1.0.2**，三个理由（见 libs.versions.toml 里的详细数据）：
+ * 当前是 **1.0.6**（配合 Kotlin 2.3.10 / AGP 9.0.1 / Compose 1.10.3）。
  *
- * 1. 2.0.0 起 AAR 元数据要求 `minCompileSdk=37`，本项目是 36
- *    （AGP 8.10.1 也不支持 37）→ 只能停在 1.x；
- * 2. 1.0.3 ~ 1.0.6 是用 Kotlin 2.3.x 编的，会把 Kotlin 顶到 2.3，
- *    进而逼着 Hilt 升到 2.60，而 Hilt 2.60 又要求 AGP ≥9 —— 连锁升版；
- * 3. 1.0.2 用 Kotlin 2.2.21 编，且**不依赖 shapes**，AAR 元数据是
- *    `minCompileSdk=1`，是本项目唯一能全链路不动其他依赖的版本。
+ * 1.0.3 起 AAR 元数据抬到 `minCompileSdk=36`，并要求 Kotlin ≥2.3；
+ * 2.0.0 与 2.1.0 要求 `minCompileSdk=37`（AGP 尚不支持 37）→ 停在 1.x。
  *
- * 1.0.2 与本文件原先按 1.0.6 写的 API 逐项核对过，完全一致。
+ * ⚠️ 1.0.6 仍然**不提供** `RuntimeShader` 的 Compose 桥接
+ * （`asComposeShader()` / `isRuntimeShaderSupported()` 在 1.0.6 里都没有）。
+ * 那两个符号在上游 catalog 里是从 `com.kyant.backdrop` 包导入的，
+ * 但库本身没发 —— 上游仓库自己也编不过，属于「未发布的新 API」。
+ * 本项目的做法是：自己写一层薄桥接（见 [RuntimeShaderCompat.kt]），
+ * 底层用 Android 平台类 `android.graphics.RuntimeShader`（API 33+）。
  */
 @Composable
 fun rememberAppBackdrop(): LayerBackdrop = rememberLayerBackdrop()
