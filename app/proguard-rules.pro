@@ -53,3 +53,18 @@
 # ---- 保留行号，便于排查问题 ----
 -keepattributes SourceFile,LineNumberTable
 -renamesourcefileattribute SourceFile
+
+# =============================================================================
+#  org.xmlpull.v1（kxml2 带进来的，已在 build.gradle.kts 里排掉 kxml2）
+#
+#  真正修掉这问题的是 app/build.gradle.kts 里 `exclude kxml2` 那几行 ——
+#  Android 平台自带 org.xmlpull.v1.*，两份同时进 dex 会让 release 的 R8 报：
+#    Library class android.content.res.XmlResourceParser
+#    implements program class org.xmlpull.v1.XmlPullParser
+#
+#  下面两行是**兜底**：万一将来某个依赖又把 xmlpull 拖回来，这里保证
+#  R8 不会因为「库类/程序类」判定而失败，同时缺类也只是一条警告。
+#  注意不能只写 -dontwarn —— 那是把错误藏起来，不是修掉。
+# =============================================================================
+-dontwarn org.xmlpull.**
+-keep class org.xmlpull.** { *; }

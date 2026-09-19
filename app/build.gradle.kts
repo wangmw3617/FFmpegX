@@ -256,9 +256,23 @@ dependencies {
 
     // WebDAV 客户端。
     // dav4jvm 只发到 JitPack（见 settings.gradle.kts 与 libs.versions.toml）。
-    // 紧跟着的 okhttp 是**显式覆盖**：dav4jvm 2.2.1 传递依赖 OkHttp 4.10.0，
+    //
+    // 排除 kxml2：它自己就打包了 org.xmlpull.v1.*（XmlPullParser /
+    // XmlPullParserFactory / XmlSerializer）外加一份
+    // META-INF/services/org.xmlpull.v1.XmlPullParserFactory，而 **Android 平台
+    // 已内置同一套 API**。两套同时进 dex 会让 release 的 R8 直接失败：
+    //   Library class android.content.res.XmlResourceParser
+    //   implements program class org.xmlpull.v1.XmlPullParser
+    // （debug 不做 R8 所以看不出来，只有 release 炸。）
+    //
+    // 排除不会影响 WebDAV 的 XML 解析：运行时 android.jar 永远优先，
+    // 加载的本就是平台实现；kxml2 那份只是重复。
+    // 已核对 kxml2-2.3.0.pom 的 <dependencies/> 为空 —— 排它即排干净。
+    implementation(libs.dav4jvm) {
+        exclude(group = "net.sf.kxml", module = "kxml2")
+    }
+    // 显式覆盖：dav4jvm 2.2.1 传递依赖 OkHttp 4.10.0，
     // 显式写 4.12.0 会在依赖图里把它顶上去，修掉若干 CVE。
-    implementation(libs.dav4jvm)
     implementation(libs.okhttp)
     // okio 同理由此显式引入：上传进度包装里用到了 `buffer()` / `ForwardingSink`，
     // 光靠 OkHttp 的传递依赖拿不到编译期可见性（详见 libs.versions.toml）。
