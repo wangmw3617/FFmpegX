@@ -18,6 +18,12 @@ import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.RequestBody
 import okhttp3.RequestBody.Companion.asRequestBody
+// okio 是 OkHttp 的传递依赖，本身没有「随 okhttp3 一起在类路径上」的保证：
+// 不写显式依赖的话，`okio.buffer` 这类顶层函数就解析不到（Unresolved reference）。
+import okio.Buffer
+import okio.BufferedSink
+import okio.ForwardingSink
+import okio.buffer
 import java.io.File
 import java.io.IOException
 import java.io.InputStream
@@ -553,12 +559,12 @@ class WebDavClient @Inject constructor() {
 
         override fun contentLength() = delegate.contentLength()
 
-        override fun writeTo(sink: okio.BufferedSink) {
-            val forwarding = object : okio.ForwardingSink(sink) {
+        override fun writeTo(sink: BufferedSink) {
+            val forwarding = object : ForwardingSink(sink) {
                 private var written = 0L
                 private var lastReported = 0L
 
-                override fun write(source: okio.Buffer, byteCount: Long) {
+                override fun write(source: Buffer, byteCount: Long) {
                     super.write(source, byteCount)
                     written += byteCount
                     if (written - lastReported >= PROGRESS_STEP || written == total) {
@@ -567,7 +573,7 @@ class WebDavClient @Inject constructor() {
                     }
                 }
             }
-            val buffered = okio.buffer(forwarding)
+            val buffered = forwarding.buffer()
             delegate.writeTo(buffered)
             buffered.flush()
         }

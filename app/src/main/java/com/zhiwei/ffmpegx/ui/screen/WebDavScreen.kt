@@ -189,8 +189,7 @@ fun WebDavScreen(viewModel: WebDavViewModel = hiltViewModel()) {
             }
         }
 
-        Spacer(Modifier.height(8.dp))
-        BottomBarReserve()
+        Spacer(Modifier.height(BottomBarReserve))
     }
 
     pendingDelete?.let { entry ->

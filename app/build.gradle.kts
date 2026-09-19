@@ -260,6 +260,9 @@ dependencies {
     // 显式写 4.12.0 会在依赖图里把它顶上去，修掉若干 CVE。
     implementation(libs.dav4jvm)
     implementation(libs.okhttp)
+    // okio 同理由此显式引入：上传进度包装里用到了 `buffer()` / `ForwardingSink`，
+    // 光靠 OkHttp 的传递依赖拿不到编译期可见性（详见 libs.versions.toml）。
+    implementation(libs.okio)
 
     // FFmpeg 核心（唯一后端）。AAR 从本地 Maven 仓库解析，
     // 传递依赖 com.arthenica:smart-exception-java 走 mavenCentral。
