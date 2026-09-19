@@ -53,6 +53,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import java.io.File
 import javax.inject.Inject
 
@@ -186,6 +187,8 @@ data class ToolUiState(
     val previewCommands: List<List<String>> = emptyList(),
     val busy: Boolean = false,
     val busyMessage: String = "",
+    /** 点下「开始处理」之后、真正入队完成之前的短暂时段，用来给按钮即时反馈 */
+    val submitting: Boolean = false,
     val error: String? = null,
     val toast: String? = null,
     val nativeReady: Boolean = false,
@@ -276,12 +279,50 @@ class ToolViewModel @Inject constructor(
     /**
      * 拖动滑块时 update 会被每帧调用，而 refresh 要重建命令 + 跑一次规划器，
      * 直接同步执行会明显掉帧。这里做 120ms 防抖。
+     *
+     * ⚠️ 防抖意味着**表单状态会比 [ToolUiState.plan] / [ToolUiState.previewCommands]
+     * 领先最多 120ms**。凡是「读表单去执行」的路径都必须先把这个窗口冲掉，
+     * 否则会拿上一次的 plan 去跑这一次的参数 —— 见 [start]。
      */
     private fun scheduleRefresh() {
         refreshJob?.cancel()
         refreshJob = viewModelScope.launch {
             kotlinx.coroutines.delay(120)
-            refresh()
+            // 换到默认调度器再算。
+            //
+            // viewModelScope 默认跑在 Main.immediate，而 refresh 里要做两遍
+            // 「重建命令 + 跑规划器」，涉及几十个字符串拼接与滤镜串推导。
+            // 参数一多（拼接、字幕、水印叠加）单次能到十几毫秒，留在主线程上就是
+            // 一次可见的掉帧 —— 表现也正是「滑动滑块时一卡一卡」。
+            // 它只读快照、只写 _state，没有线程亲和性要求，可以安全挪走。
+            withContext(kotlinx.coroutines.Dispatchers.Default) {
+                refresh()
+            }
+        }
+    }
+
+    /**
+     * 立刻把待处理的刷新跑完（取消防抖窗口）。
+     *
+     * 供 [start] 在生成命令前调用：直接读 `current.plan` 的话，如果用户
+     * 刚拖完滑块就点「开始处理」，拿到的会是**上一版参数**的方案 ——
+     * 命令预览和实际执行的内容对不上，用户感知就是「按钮乱跑 / 点了没反应」。
+     *
+     * ⚠️ 这里是 `suspend` 且**自带 `withContext(Default)`**，两个理由：
+     *
+     * 1. [refresh] 要重建命令 + 跑规划器，正是 [scheduleRefresh] 特意挪出主线程
+     *    的那段重活。若在调用点同步跑，等于把刚优化掉的开销又搬回主线程，
+     *    而且偏偏落在「参数最复杂、用户刚点开始处理」的时刻。
+     * 2. 必须**等它跑完**再返回 —— [start] 紧接着就要读 `_state.value.plan`，
+     *    异步跑（`launch`）等于没刷新。用 `suspend` 让调用方 `await`，
+     *    既保证顺序，又不阻塞主线程（调用方本身在协程里）。
+     */
+    private suspend fun flushRefresh() {
+        if (refreshJob?.isActive == true) {
+            refreshJob?.cancel()
+            withContext(kotlinx.coroutines.Dispatchers.Default) {
+                refresh()
+            }
         }
     }
 
@@ -1045,39 +1086,84 @@ class ToolViewModel @Inject constructor(
             _state.update { it.copy(error = "请先选择输入文件") }
             return
         }
+        // 已经在提交中就忽略重复点击。
+        //
+        // 按钮此时是 disabled 的，正常点不到 —— 但无障碍服务、外接键盘的回车、
+        // 快速双击的第二个事件都可能绕过 UI 层的禁用。入队会重复建任务，
+        // 所以这一层也要挡。
+        if (current.submitting) return
 
-        // 正式执行时用真实方案重新生成一遍，带上硬件加速参数
-        val plan = current.plan ?: dryPlan(current)
-        val commands = runCatching { buildCommands(current, plan) }.getOrDefault(emptyList())
-        if (commands.isEmpty()) {
-            // 拼接的 demuxer 模式在输入来自系统授权时会生成不出命令，
-            // 这里给出具体原因，而不是笼统的「参数不完整」
-            val concatHint = if (feature == TaskFeature.CONCAT &&
-                (listOf(current.form.inputPath) + current.form.extraInputs).any { isVirtualInput(it) }
-            ) {
-                "拼接的「快速合并」不支持来自系统授权的文件，" +
-                    "请改用「逐帧重编码」，或先把片段保存到本机。"
-            } else {
-                "命令为空，请检查参数是否填写完整"
-            }
-            _state.update { it.copy(error = concatHint) }
-            return
-        }
+        // 提交中：按钮立刻切成忙碌态。
+        //
+        // 入队虽然是内存操作，但紧接着要解析输出路径（可能建目录、查 SAF），
+        // 在低端机上能到几百毫秒。没有这个状态的话，点下去到「有任务正在执行」
+        // 之间是一段完全无反馈的空档，用户会以为没点上而反复点击。
+        _state.update { it.copy(submitting = true) }
 
         viewModelScope.launch {
-            val form = current.form
-            val outputPath = form.outputPath.ifBlank {
-                resolveOutputFile(current).absolutePath
+            // 整段包在 try 里：任何一步失败都必须把 submitting 复位，
+            // 否则按钮会永久停在「正在创建任务…」且不可点，只能杀进程。
+            //
+            // 用 Boolean 表示「是否真的入队了」：命令为空属于**校验失败**，
+            // 它走的是「提示用户去补参数」而不是「提交异常」，所以既不能进
+            // onFailure（会把用户填错参数说成程序出错），也不能进 onSuccess
+            // （会谎报「已加入队列」）。
+            val enqueued = runCatching {
+                // 先把 120ms 防抖窗口里挂着的刷新跑完（会切到 Default 线程）。
+                //
+                // 不做这一步的话：用户拖完滑块（或刚选完文件）立刻点「开始处理」，
+                // 此时 plan 还是**上一版参数**的，生成出来的命令与屏幕上预览的
+                // 命令不一致 —— 这是「开始处理按钮」最容易被感知成 bug 的地方。
+                flushRefresh()
+
+                // 用真实方案生成命令（带上硬件加速参数）。
+                // buildCommands / buildPlan 同样是纯计算，留在主线程会卡一下。
+                val commands = withContext(kotlinx.coroutines.Dispatchers.Default) {
+                    val plan = _state.value.plan ?: dryPlan(_state.value)
+                    runCatching { buildCommands(_state.value, plan) }.getOrDefault(emptyList())
+                }
+                if (commands.isEmpty()) {
+                    // 拼接的 demuxer 模式在输入来自系统授权时会生成不出命令，
+                    // 这里给出具体原因，而不是笼统的「参数不完整」
+                    val concatHint = if (feature == TaskFeature.CONCAT &&
+                        (listOf(_state.value.form.inputPath) + _state.value.form.extraInputs)
+                            .any { isVirtualInput(it) }
+                    ) {
+                        "拼接的「快速合并」不支持来自系统授权的文件，" +
+                            "请改用「逐帧重编码」，或先把片段保存到本机。"
+                    } else {
+                        "命令为空，请检查参数是否填写完整"
+                    }
+                    _state.update { it.copy(error = concatHint, submitting = false) }
+                    return@runCatching false
+                }
+
+                val form = _state.value.form
+                val outputPath = form.outputPath.ifBlank {
+                    resolveOutputFile(_state.value).absolutePath
+                }
+                taskRepository.enqueue(
+                    title = "${feature.label} · " +
+                        "${form.inputDisplayName.ifBlank { File(form.inputPath).name }}",
+                    feature = feature,
+                    inputPath = form.inputPath,
+                    outputPath = outputPath,
+                    commands = commands,
+                    totalDurationUs = form.mediaInfo?.durationUs ?: 0L,
+                )
+                true
+            }.onFailure { error ->
+                _state.update {
+                    it.copy(
+                        submitting = false,
+                        error = "创建任务失败：${error.message ?: "未知错误"}",
+                    )
+                }
+            }.getOrDefault(false)
+
+            if (enqueued) {
+                _state.update { it.copy(toast = "已加入队列", submitting = false) }
             }
-            taskRepository.enqueue(
-                title = "${feature.label} · ${form.inputDisplayName.ifBlank { File(form.inputPath).name }}",
-                feature = feature,
-                inputPath = form.inputPath,
-                outputPath = outputPath,
-                commands = commands,
-                totalDurationUs = form.mediaInfo?.durationUs ?: 0L,
-            )
-            _state.update { it.copy(toast = "已加入队列") }
         }
     }
 

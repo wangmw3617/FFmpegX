@@ -80,6 +80,42 @@ ffmpegKitNext = "9.0.0"
 # ---------------------------------------------------------------------------
 liquidGlass = "1.0.2"
 
+# ---------------------------------------------------------------------------
+# WebDAV 客户端：bitfireAT/dav4jvm
+#
+# 只发到 **JitPack**（无 Maven Central 制品），所以 settings.gradle.kts 里
+# 专门给它加了一个限定 group 的 jitpack 仓库。
+#
+# ⚠️ 为什么必须停在 **2.2.1**（不是「不想升级」，是升不了）：
+#
+#   版本      kotlin-stdlib   HTTP 客户端    对本项目
+#   ------------------------------------------------------------------
+#   4.1.0     2.4.10          Ktor 3.5.2     ✗ 元数据 2.4，Hilt 读不了
+#   4.0.x     2.4.10          Ktor 3.5.x     ✗ 同上
+#   3.0.x     2.3.21          Ktor 3.5.x     ✗ 元数据 2.3，Hilt 读不了
+#   2.2.1     1.7.20          OkHttp 4.10.0  ✓ 唯一能合入
+#
+#   Kotlin 元数据**不向下兼容**：依赖用 Kotlin X 编的，消费方编译器就得 ≥X。
+#   dav4jvm 从 3.0.0 起改用 Ktor 并升到 Kotlin 2.3，本项目停在 Kotlin 2.2.21
+#   （被 Liquid Glass / Hilt / AGP 这条链钉死，见本文件顶部），消费不了。
+#
+# ⚠️ 由此带来的两个已知代价（已记入 README「已知限制」）：
+#   1. 2.2.1 发布于 2021 年，其传递依赖 OkHttp 4.10.0 / commons-lang3 3.8.1
+#      都是老版本，带已知安全公告。它们只在 WebDAV 功能里被用到，
+#      且**不处理不可信输入**（只连用户自己填的服务器），风险可控。
+#   2. JitPack 是单点依赖：它不可用时 CI 解析不到该坐标。
+#      要彻底摆脱，得先把上面那条 Kotlin 链整体升级。
+#
+# 等依赖链整体升级到 Kotlin 2.4 / Hilt 新版 / AGP 9 之后，这里可以直接跳到
+# 4.1.0 并同时去掉 jitpack 仓库之外的顾虑（Ktor 仍在 JitPack 之外）。
+# ---------------------------------------------------------------------------
+dav4jvm = "2.2.1"
+
+# OkHttp：dav4jvm 2.2.1 的传递依赖会带 4.10.0，这里显式提到更新的 4.x。
+# 不跨到 5.x —— 5.x 要求 minSdk 21 且改了若干 API，dav4jvm 2.2.1 是按 4.x
+# 的 API 编的。4.12.0 是 4.x 的最后一版，修掉了 4.10 的若干 CVE。
+okhttp = "4.12.0"
+
 junit = "4.13.2"
 
 [libraries]
@@ -134,6 +170,12 @@ ffmpeg-kit-next = { module = "com.arthenica:ffmpeg-kit-next", version.ref = "ffm
 # Liquid Glass 效果（见上方 versions 注释）
 # 只引 backdrop。backdrop 1.0.2 不依赖 shapes，本项目也没用到它。
 kyant-backdrop = { module = "io.github.kyant0:backdrop", version.ref = "liquidGlass" }
+
+# WebDAV 客户端（见上方 dav4jvm 注释：只能停在 2.2.1）
+dav4jvm = { module = "com.github.bitfireAT:dav4jvm", version.ref = "dav4jvm" }
+# 显式提升 dav4jvm 传递依赖的 OkHttp，修掉 4.10.0 的若干 CVE。
+# 必须是 implementation 而非纯 BOM 约束，见 app/build.gradle.kts。
+okhttp = { module = "com.squareup.okhttp3:okhttp", version.ref = "okhttp" }
 
 [plugins]
 android-application = { id = "com.android.application", version.ref = "agp" }

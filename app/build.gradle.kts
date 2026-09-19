@@ -254,6 +254,13 @@ dependencies {
     implementation(libs.kotlinx.serialization.json)
     implementation(libs.kotlinx.coroutines.android)
 
+    // WebDAV 客户端。
+    // dav4jvm 只发到 JitPack（见 settings.gradle.kts 与 libs.versions.toml）。
+    // 紧跟着的 okhttp 是**显式覆盖**：dav4jvm 2.2.1 传递依赖 OkHttp 4.10.0，
+    // 显式写 4.12.0 会在依赖图里把它顶上去，修掉若干 CVE。
+    implementation(libs.dav4jvm)
+    implementation(libs.okhttp)
+
     // FFmpeg 核心（唯一后端）。AAR 从本地 Maven 仓库解析，
     // 传递依赖 com.arthenica:smart-exception-java 走 mavenCentral。
     implementation(libs.ffmpeg.kit.next)

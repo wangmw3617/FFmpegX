@@ -43,6 +43,19 @@ class SettingsViewModel @Inject constructor(
     val settings: StateFlow<AppSettings> = repository.settings
         .stateIn(viewModelScope, SharingStarted.Eagerly, AppSettings())
 
+    /**
+     * WebDAV 设置（供设置页显示当前服务器并清除密码）。
+     *
+     * 与工具页共享的 [settings] 分开收集：WebDAV 那份要解密（一次 Keystore
+     * Binder 往返），不该挂在高频路径上。
+     */
+    val webDav: StateFlow<com.zhiwei.ffmpegx.core.settings.WebDavSettings> = repository.webDav
+        .stateIn(
+            viewModelScope,
+            SharingStarted.Eagerly,
+            com.zhiwei.ffmpegx.core.settings.WebDavSettings(),
+        )
+
     val deviceInfo: StateFlow<DeviceCodecReport?> = kotlinx.coroutines.flow.flow {
         emit(withContext(Dispatchers.Default) { scanner.report() })
     }.stateIn(viewModelScope, SharingStarted.Eagerly, null)
@@ -77,4 +90,7 @@ class SettingsViewModel @Inject constructor(
     fun setThemeMode(value: ThemeMode) = viewModelScope.launch { repository.setThemeMode(value) }
     fun setPreferVulkan(value: Boolean) = viewModelScope.launch { repository.setPreferVulkan(value) }
     fun reset() = viewModelScope.launch { repository.resetAll() }
+
+    /** 只清密码，保留服务器地址与用户名 —— 便于改完密码后直接重连 */
+    fun clearWebDavCredentials() = viewModelScope.launch { repository.clearWebDavCredentials() }
 }

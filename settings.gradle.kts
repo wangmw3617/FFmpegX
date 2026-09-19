@@ -69,6 +69,22 @@ dependencyResolutionManagement {
             // 只让这个仓库负责 ffmpeg-kit-next，避免它参与其它依赖的解析
             content { includeGroup("com.arthenica") }
         }
+        // ---------------------------------------------------------------------
+        // JitPack：dav4jvm 只发布到 JitPack，没有 Maven Central 制品。
+        //
+        // ⚠️ 为什么只限定 `com.github.bitfireAT`：
+        //    JitPack 会按需**用源码现编**，任何一个坐标第一次被解析都可能
+        //    触发一次远程构建（几十秒到几分钟），失败还会连带整个构建报错。
+        //    用 content 过滤把它锁死在这一个 group，其余依赖仍走
+        //    google / mavenCentral，不会被 JitPack 的构建延迟拖累。
+        //
+        // ⚠️ CI 上是单点依赖：JitPack 不可用时 `dav4jvm` 解析不到，
+        //    整个 CI 会挂。缓解办法见 libs.versions.toml 里 dav4jvm 的注释。
+        // ---------------------------------------------------------------------
+        maven {
+            url = uri("https://jitpack.io")
+            content { includeGroup("com.github.bitfireAT") }
+        }
     }
 }
 

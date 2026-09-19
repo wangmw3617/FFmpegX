@@ -64,3 +64,7 @@ object ProbeRoute
 /** 原始命令行工具（区别于底部导航的「命令」日志页） */
 @Serializable
 object RawCommandRoute
+
+/** WebDAV 远端文件浏览 */
+@Serializable
+object WebDavRoute

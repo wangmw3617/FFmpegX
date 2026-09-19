@@ -34,7 +34,10 @@ import com.zhiwei.ffmpegx.ui.components.InfoRow
 import com.zhiwei.ffmpegx.ui.components.SectionCard
 
 @Composable
-fun SettingsScreen(viewModel: SettingsViewModel = hiltViewModel()) {
+fun SettingsScreen(
+    onOpenWebDav: () -> Unit = {},
+    viewModel: SettingsViewModel = hiltViewModel(),
+) {
     val settings by viewModel.settings.collectAsStateWithLifecycle()
     val device by viewModel.deviceInfo.collectAsStateWithLifecycle()
     val nativeLabel by viewModel.nativeLabel.collectAsStateWithLifecycle()
@@ -156,12 +159,46 @@ fun SettingsScreen(viewModel: SettingsViewModel = hiltViewModel()) {
             )
         }
 
+        // ---------------------------------------------------------- WebDAV ----
+        //
+        // 单独放在「输出」之后：它本质上是「产物去哪儿」的另一种选择
+        // （本机 / 远端），和输出目录是同一类需求的两个方向。
+        SectionCard(
+            title = "WebDAV 服务器",
+            subtitle = "把成品直接传到自己的网盘，或从远端取素材",
+        ) {
+            val dav by viewModel.webDav.collectAsStateWithLifecycle()
+            if (dav.isConfigured) {
+                InfoRow("服务器", dav.baseUrl)
+                InfoRow("用户名", dav.username)
+            } else {
+                Text(
+                    "尚未配置。配置后可以在「WebDAV 文件」页浏览远端目录、" +
+                        "下载素材作为输入、上传转码成品。",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            Row {
+                TextButton(onClick = onOpenWebDav) {
+                    Text(if (dav.isConfigured) "管理 WebDAV" else "配置 WebDAV")
+                }
+                if (dav.isConfigured) {
+                    TextButton(onClick = { viewModel.clearWebDavCredentials() }) {
+                        Text("清除密码")
+                    }
+                }
+            }
+        }
+
         // -------------------------------------------------------------- 关于 ----
         SectionCard(title = "关于") {
             InfoRow("应用版本", BuildConfig.VERSION_NAME)
             InfoRow("转码引擎版本", nativeLabel)
             Text(
-                "所有处理都在本机完成，不上传任何文件，也不需要联网。",
+                "所有转码处理都在本机完成，不会上传任何文件。" +
+                    "只有你在「WebDAV 文件」页主动操作时才会联网，" +
+                    "连的是你自己填的服务器地址。",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
