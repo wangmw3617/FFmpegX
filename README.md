@@ -31,7 +31,6 @@ FFmpegX 是面向 Android 平台的 FFmpeg 图形前端。它将 FFmpeg 的命�
 | 进阶处理 | 视频变速、去水印、图片转视频 |
 | 媒体信息 | ffprobe 全字段解析 |
 | 命令行 | 直接输入 ffmpeg 参数 |
-| WebDAV 文件 | 浏览远端目录、下载素材、上传成品、新建/删除 |
 | 任务队列 | 串行执行、进度、取消、前台服务 |
 
 首页展示当前设备实际支持的硬件编解码能力。
@@ -154,13 +153,6 @@ Download/FFmpegX/
 - 「媒体信息」页直接读取 SAF 文档时会临时复制一份副本供 ffprobe 使用（ffprobe 需要
   可寻址输入），探测完成后立即删除；转码主流程不受影响，仍走零拷贝直读。
 - 转码流程尚未在真机或模拟器上完成实机验证，目前仅由单元测试覆盖。
-- WebDAV 只支持 **Basic** 认证（Nextcloud / 群晖 / Alist / nginx dav 等均支持）。
-  仅支持 Digest 的服务器无法连接。
-- WebDAV 的凭据用 AndroidKeyStore 加密后存 DataStore；加密不可用时**不落盘**
-  （不会退化成明文），代价是每次启动需重新输入密码。
-- 为保持依赖链不被迫整体升级，WebDAV 客户端停在 `dav4jvm 2.2.1`（2021 年版本，
-  走 JitPack 分发，仅支持 OkHttp 4.x）。`3.0.0+` 改用 Ktor 并要求 Kotlin ≥2.3，
-  与本项目的 Kotlin 2.2.21 不兼容。
 
 ## 目录结构
 
@@ -171,8 +163,6 @@ app/src/main/java/com/zhiwei/ffmpegx/
   core/cmd/      命令构造
   core/engine/   执行会话与进度解析
   core/media/    SAF Uri 解析与媒体库导出
-  core/settings/ 偏好设置与凭据加密（DataStore + AndroidKeyStore）
-  core/webdav/   WebDAV 客户端与数据模型
   core/task/     Room 任务队列与前台服务
   ui/            Compose 界面
 scripts/

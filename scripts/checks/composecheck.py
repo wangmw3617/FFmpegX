@@ -94,30 +94,6 @@ def _is_comment(line):
     return s.startswith('//') or s.startswith('*') or s.startswith('/*')
 
 
-# 自身就叫 `rememberXxx` 的函数**声明**行。
-#
-# `remember*` 那条规则是按名字匹配的启发式，无法区分「调用 Compose 的
-# rememberXxx()」和「声明一个恰好叫 rememberXxx() 的普通函数」。
-# 后者是合法的（本项目就有一个 ViewModel 方法叫 rememberCurrentDir），
-# 但它会被误报 —— 而声明行本身不可能构成「非法调用 @Composable」。
-#
-# 去掉这一类，保留对真实调用的检测：
-#   fun rememberFoo() { ... }        ← 声明，跳过
-#   val x = rememberFoo()            ← 调用，照报
-#   rememberFoo()                    ← 调用，照报
-SELF_DECL = re.compile(
-    r'^' + ANNOTATIONS + MODIFIERS + r'fun\s+'
-    r'(?:<[^<>]*>\s*)?'
-    r'(?:[A-Za-z_][\w.]*(?:<[^<>]*>)?\??\.)?'
-    r'(remember[A-Z]\w*)\s*[(<]'
-)
-
-
-def _is_self_remember_decl(line):
-    """这一行是「声明一个名为 rememberXxx 的函数」吗（而非调用它）？"""
-    return SELF_DECL.match(line.strip()) is not None
-
-
 def check(text):
     """返回 [(line_no, line_text, api_name, enclosing_func, is_composable)]"""
     lines = text.split('\n')
@@ -155,9 +131,6 @@ def check(text):
         if _is_comment(raw):
             continue
         stripped = raw.strip()
-        # 「声明一个叫 rememberXxx 的普通函数」不是调用，详见 _is_self_remember_decl
-        if _is_self_remember_decl(raw):
-            continue
         for rx, label in COMPILED:
             if not rx.search(raw):
                 continue

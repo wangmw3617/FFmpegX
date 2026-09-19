@@ -68,37 +68,6 @@ data class AppSettings(
     }
 }
 
-/**
- * WebDAV 连接设置。
- *
- * 与 [AppSettings] 分开（原因见 `SettingsRepository.webDav` 的注释）。
- * [password] 在这里是**明文**——它只在内存中短暂存在，落盘的是密文。
- * 界面层拿到后只应把它填进密码框、拼进请求头，**不要写日志、不要放进
- * `data class` 的 `toString()` 输出里**。为此重写了 `toString()`。
- */
-data class WebDavSettings(
-    val baseUrl: String = "",
-    val username: String = "",
-    val password: String = "",
-    /** 上次使用的远端目录，作为上传对话框的默认值 */
-    val lastRemoteDir: String = "",
-) {
-    /** 三个必填项是否都齐了 */
-    val isConfigured: Boolean
-        get() = baseUrl.isNotBlank() && username.isNotBlank() && password.isNotEmpty()
-
-    /**
-     * 覆盖 toString 把密码藏掉。
-     *
-     * data class 默认生成的 toString 会原样打印每个字段，一旦有人
-     * `Log.d(TAG, "$settings")` 或把它带进异常信息，密码就直接躺在 logcat 里了。
-     * 这在开源项目里尤其危险——用户贴日志求助时不会注意到这一点。
-     */
-    override fun toString(): String =
-        "WebDavSettings(baseUrl=$baseUrl, username=$username, password=***, " +
-            "lastRemoteDir=$lastRemoteDir)"
-}
-
 private val Context.dataStore: DataStore<Preferences> by preferencesDataStore(name = "ffmpegx_settings")
 
 @Singleton
@@ -117,26 +86,6 @@ class SettingsRepository @Inject constructor(
         val THEME_MODE = stringPreferencesKey("theme_mode")
         val PREFER_VULKAN = booleanPreferencesKey("prefer_vulkan")
         val LAST_PRESET = stringPreferencesKey("last_preset")
-
-        // ---- WebDAV ----
-        val DAV_URL = stringPreferencesKey("dav_url")
-        val DAV_USER = stringPreferencesKey("dav_user")
-        /**
-         * 密码的**密文**（Base64 后的 AES-GCM）。
-         *
-         * ⚠️ 为什么不存明文：DataStore 落在应用私有目录 `/data/data/<pkg>/files/`，
-         * root 设备、以及本项目开着 `allowBackup` 时的云备份都可能把它带走。
-         * 这里先加密再存，密钥放在 Android Keystore 里 —— Keystore 的密钥
-         * **不参与备份**，所以备份被拿走也解不开。
-         *
-         * ⚠️ 这不是「绝对安全」：同设备上有 root 的进程仍可借 Keystore 解密
-         * （只是不能导出密钥）。它防的是「备份泄漏」和「随手翻文件看到密码」
-         * 这两类最常见的问题，不是防本地高权限攻击者。
-         */
-        val DAV_SECRET = stringPreferencesKey("dav_secret")
-
-        /** 上次上传到的远端目录，下次默认填它 */
-        val DAV_LAST_DIR = stringPreferencesKey("dav_last_dir")
     }
 
     val settings: Flow<AppSettings> = context.dataStore.data.map { prefs ->
@@ -159,50 +108,6 @@ class SettingsRepository @Inject constructor(
                 runCatching { CompressPreset.valueOf(name) }.getOrNull()
             } ?: CompressPreset.WECHAT,
         )
-    }
-
-    /**
-     * WebDAV 账户设置。
-     *
-     * 单独一个 Flow 而不是并进 [AppSettings]，理由是**解密是有代价的**：
-     * `settings` 被工具页的 ViewModel 每个实例都收集、每次改参数都会走一遍，
-     * 而 Keystore 解密要跨进程调用（几百微秒到几毫秒）。把它塞进那个高频流里，
-     * 就是给「拖动滑块」这条路径平白加一次 Binder 往返。
-     * 只有 WebDAV 页面才收集这个 Flow，代价就只落在需要它的地方。
-     */
-    val webDav: Flow<WebDavSettings> = context.dataStore.data.map { prefs ->
-        WebDavSettings(
-            baseUrl = prefs[Keys.DAV_URL].orEmpty(),
-            username = prefs[Keys.DAV_USER].orEmpty(),
-            password = WebDavCredentialCipher.decrypt(prefs[Keys.DAV_SECRET].orEmpty()),
-            lastRemoteDir = prefs[Keys.DAV_LAST_DIR].orEmpty(),
-        )
-    }
-
-    suspend fun setWebDav(baseUrl: String, username: String, password: String) {
-        val encrypted = WebDavCredentialCipher.encrypt(password)
-        context.dataStore.edit { prefs ->
-            prefs[Keys.DAV_URL] = baseUrl.trim()
-            prefs[Keys.DAV_USER] = username.trim()
-            if (encrypted != null) {
-                prefs[Keys.DAV_SECRET] = encrypted
-            } else if (password.isEmpty()) {
-                // 用户清空了密码 → 把密文一并清掉，不要留着一个解不开的旧值
-                prefs.remove(Keys.DAV_SECRET)
-            }
-            // encrypted == null 且 password 非空：本机无法加密，保留原有密文不动，
-            // 并让调用方通过返回值/设置页提示「密码未能保存」。
-        }
-    }
-
-    suspend fun setWebDavLastDir(dir: String) =
-        edit { it[Keys.DAV_LAST_DIR] = dir.trim() }
-
-    /** 清除 WebDAV 凭据（保留服务器地址与用户名，便于重新登录） */
-    suspend fun clearWebDavCredentials() {
-        context.dataStore.edit { prefs ->
-            prefs.remove(Keys.DAV_SECRET)
-        }
     }
 
     suspend fun setHwStrategy(value: HwStrategy) = edit { it[Keys.HW_STRATEGY] = value.name }

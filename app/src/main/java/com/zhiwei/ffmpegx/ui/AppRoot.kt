@@ -8,9 +8,6 @@ import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.spring
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.gestures.awaitEachGesture
-import androidx.compose.foundation.gestures.awaitFirstDown
-import androidx.compose.foundation.gestures.waitForUpOrCancellation
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -45,9 +42,6 @@ import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -55,7 +49,6 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
-import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.contentDescription
@@ -93,16 +86,13 @@ import com.zhiwei.ffmpegx.ui.nav.SpeedRoute
 import com.zhiwei.ffmpegx.ui.nav.SubtitleRoute
 import com.zhiwei.ffmpegx.ui.nav.ThumbnailRoute
 import com.zhiwei.ffmpegx.ui.nav.TrimRoute
-import com.zhiwei.ffmpegx.ui.nav.WebDavRoute
 import com.zhiwei.ffmpegx.ui.screen.ConsoleScreen
 import com.zhiwei.ffmpegx.ui.screen.HomeScreen
 import com.zhiwei.ffmpegx.ui.screen.ProbeScreen
 import com.zhiwei.ffmpegx.ui.screen.QueueScreen
 import com.zhiwei.ffmpegx.ui.screen.SettingsScreen
 import com.zhiwei.ffmpegx.ui.screen.TasksViewModel
-import com.zhiwei.ffmpegx.ui.screen.WebDavScreen
 import com.zhiwei.ffmpegx.ui.theme.AppBackground
-import com.zhiwei.ffmpegx.ui.theme.AppContent
 import com.zhiwei.ffmpegx.ui.theme.liquidGlass
 import com.zhiwei.ffmpegx.ui.theme.rememberAppBackdrop
 import com.zhiwei.ffmpegx.ui.tool.AudioScreen
@@ -162,19 +152,13 @@ fun AppRoot(settings: AppSettings) {
     }
 
     Box(Modifier.fillMaxSize()) {
-        // ① 采样层：**只有背景色斑，不含页面内容**。
+        // ① 采样层：背景色斑 + 全部页面内容。
         //
-        // 这里曾经把整屏内容一起纳进来（理由是「内容滚到玻璃下面时玻璃能真的
-        // 把它糊掉」），代价是任何滚动/动画都会触发一次整屏图层重录 + 全屏模糊
-        // 重采样 —— 那是全局卡顿的头号来源。上游 catalog 的采样层只包一张静态
-        // 图，我们这里退一步：只采样底色与色斑。详见 LiquidGlass.kt 的文件头。
-        AppBackground(backdrop)
-
-        // ② 内容层：页面内容，**不参与采样**。
-        //
-        // 内容**铺满整屏**，不给底栏预留位置 —— 各一级页面自己在内容末尾留出
-        // BottomBarReserve，避免最后一项被悬浮底栏挡住。
-        AppContent {
+        // 内容**铺满整屏**，不给底栏预留位置 —— 这样它能滚到悬浮底栏下面，
+        // 玻璃才有东西可以模糊。早先是给底栏留了一条空档，玻璃只能糊到
+        // 一层背景渐变，模糊前后没有差别，看着就是一块不透明的色板。
+        // 各一级页面自己在内容末尾留出 BottomBarReserve，避免最后一项被挡住。
+        AppBackground(backdrop) {
             Column(Modifier.fillMaxSize()) {
                 // 顶栏不加玻璃效果：容器透明，让背景色斑自然延伸上来，
                 // 视觉上更连贯，也不会在顶部压出一块厚重的板。
@@ -206,9 +190,7 @@ fun AppRoot(settings: AppSettings) {
                     }
                     composable<QueueRoute> { QueueScreen() }
                     composable<ConsoleRoute> { ConsoleScreen() }
-                    composable<SettingsRoute> {
-                        SettingsScreen(onOpenWebDav = { navController.navigate(WebDavRoute) })
-                    }
+                    composable<SettingsRoute> { SettingsScreen() }
 
                     composable<ConvertRoute> { ConvertScreen() }
                     composable<CompressRoute> { CompressScreen() }
@@ -226,12 +208,11 @@ fun AppRoot(settings: AppSettings) {
                     composable<SlideshowRoute> { SlideshowScreen() }
                     composable<ProbeRoute> { ProbeScreen() }
                     composable<RawCommandRoute> { ConsoleToolScreen() }
-                    composable<WebDavRoute> { WebDavScreen() }
                 }
             }
         }
 
-        // ③ 玻璃层。必须是采样层的**兄弟**且排在后面：被包在采样层里的话，
+        // ② 玻璃层。必须是采样层的**兄弟**且排在后面：被包在采样层里的话，
         //    玻璃采到的是自己，会递归成一团糊。
         if (isTopLevel) {
             GlassBottomBar(
@@ -271,20 +252,6 @@ private fun GlassBottomBar(
         destination?.hasRoute(it.route::class) == true
     }
 
-    // 按压进度：任一标签被按下时升到 1。上游做法是每帧跟随手指位置做
-    // 高光与缩放（InteractiveHighlight + DampedDragAnimation），代价是要自己
-    // 接管手势。这里取一个更轻的等效：按住时把整条玻璃「压一下」——
-    // 内投影变深、外投影收紧、折射收起，松手回弹。
-    //
-    // 为什么值得做：玻璃是「有厚度」的材质，没有按压反馈时，点标签的触感
-    // 全靠 Material 涟漪；而涟漪在玻璃上会被高光冲淡，用户会觉得「点了没反应」。
-    var pressed by remember { mutableStateOf(false) }
-    val pressProgress by animateFloatAsState(
-        targetValue = if (pressed) 1f else 0f,
-        animationSpec = spring(dampingRatio = 0.5f, stiffness = Spring.StiffnessMedium),
-        label = "barPress",
-    )
-
     BoxWithConstraints(
         modifier
             .fillMaxWidth()
@@ -294,29 +261,11 @@ private fun GlassBottomBar(
             .windowInsetsPadding(WindowInsets.navigationBars)
             .padding(horizontal = BOTTOM_BAR_SIDE_MARGIN, vertical = BOTTOM_BAR_MARGIN)
             .height(BOTTOM_BAR_HEIGHT)
-            .graphicsLayer {
-                // 按压缩放：幅度很小（0.4%），只做「手感」不做「形变」
-                val scale = 1f - 0.004f * pressProgress
-                scaleX = scale
-                scaleY = scale
-            }
             .liquidGlass(
                 backdrop = backdrop,
                 shape = RoundedCornerShape(26.dp),
-                // 参数对照上游 catalog/components/LiquidBottomTabs.kt：
-                // 底栏本体 blur 8dp / lens 24dp，并叠一层 Highlight。
-                // 早先这里 blur 给到 22dp（上游的两倍多），把背景色斑糊成一片均色，
-                // 折射与高光都失去参照 —— 那是「不如原项目」的直接原因。
-                blurRadius = 8.dp,
-                lensAmount = 24.dp,
-                withHighlight = true,
-                // 悬浮元素加投影才有「浮在内容之上」的立体感，这是上游靠
-                // Shadow(alpha = progress) 表达的东西；我们不按压时也保留一点。
-                withShadow = true,
-                // 按住时压出内投影：玻璃被「按薄」了，边缘出现一圈暗部
-                withInnerShadow = true,
-                innerShadowAlpha = 0.12f + 0.3f * pressProgress,
-                pressProgress = pressProgress,
+                blurRadius = 22.dp,
+                lensAmount = 12.dp,
             ),
     ) {
         val tabWidth = maxWidth / TOP_LEVEL_TABS.size
@@ -346,13 +295,8 @@ private fun GlassBottomBar(
                     .liquidGlass(
                         backdrop = backdrop,
                         shape = indicatorShape,
-                        // 指示器比底栏「薄」一档：模糊更浅、折射更小，
-                        // 它才像一片浮在底栏之上的小透镜，而不是第二层厚板。
-                        blurRadius = 6.dp,
-                        lensAmount = 18.dp,
-                        withHighlight = true,
-                        withInnerShadow = true,
-                        innerShadowAlpha = 0.35f,
+                        blurRadius = 10.dp,
+                        lensAmount = 8.dp,
                     ),
             )
         }
@@ -365,7 +309,6 @@ private fun GlassBottomBar(
                     selected = selected,
                     badgeCount = if (tab.route == QueueRoute) activeCount else 0,
                     indicatorShape = indicatorShape,
-                    onPressChange = { down -> pressed = down },
                     modifier = Modifier.weight(1f).fillMaxHeight(),
                     onClick = {
                         if (!selected) {
@@ -408,7 +351,6 @@ private fun GlassTab(
     selected: Boolean,
     badgeCount: Int,
     indicatorShape: Shape,
-    onPressChange: (Boolean) -> Unit,
     modifier: Modifier = Modifier,
     onClick: () -> Unit,
 ) {
@@ -423,39 +365,7 @@ private fun GlassTab(
                 .semantics { contentDescription = tab.label },
         )
 
-        // ② 按压探针：只驱动视觉动画，不拦截事件（不消费 change），
-        //    所以它不影响上面 clickable 的判定。
-        //
-        //    ⚠️ 这里**必须**用 `awaitEachGesture` + `waitForUpOrCancellation`，
-        //    不能写成 `while (true) { awaitPointerEvent() }`：
-        //    后者只在收到事件时读 `it.pressed`，一旦手势被取消（手指滑出该
-        //    Tab 范围、父层抢走事件、系统返回手势介入），就再也不会有后续事件
-        //    送进来，`pressed` 会永久停在 true —— 表现为底栏一直保持着按下态。
-        //    `waitForUpOrCancellation()` 在「抬起」和「取消」两条路径上都会返回，
-        //    因此 `finally` 里的复位一定会执行。
-        Box(
-            Modifier
-                .fillMaxSize()
-                .padding(vertical = (BOTTOM_BAR_HEIGHT - INDICATOR_HEIGHT) / 2)
-                .pointerInput(Unit) {
-                    awaitEachGesture {
-                        // 不能 consume：本探针与下面的 clickable 是兄弟节点，
-                        // 一旦把 down 事件标记为已消费，clickable 就收不到点击了。
-                        // requireUnconsumed = false 也是同理 —— 要能读到已被
-                        // 其他识别器处理过的事件，只做「观察者」。
-                        awaitFirstDown(requireUnconsumed = false)
-                        onPressChange(true)
-                        try {
-                            waitForUpOrCancellation()
-                        } finally {
-                            // 抬起 / 取消都会走到这里，保证状态复位
-                            onPressChange(false)
-                        }
-                    }
-                },
-        )
-
-        // ③ 内容层：不参与裁剪，角标可以正常探出
+        // ② 内容层：不参与裁剪，角标可以正常探出
         val tint = if (selected) {
             MaterialTheme.colorScheme.primary
         } else {
@@ -527,6 +437,5 @@ private fun titleFor(destination: NavDestination?): String = when {
     destination.hasRoute(SlideshowRoute::class) -> "图片转视频"
     destination.hasRoute(ProbeRoute::class) -> "媒体信息"
     destination.hasRoute(RawCommandRoute::class) -> "命令行"
-    destination.hasRoute(WebDavRoute::class) -> "WebDAV 文件"
     else -> "FFmpegX"
 }

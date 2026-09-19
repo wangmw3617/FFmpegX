@@ -22,10 +22,8 @@ import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.FolderOpen
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material3.Button
-import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
-import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.RangeSlider
@@ -147,45 +145,14 @@ fun ToolScaffold(
 
         CommandPreviewCard(commands = state.previewCommands)
 
-        // 「开始处理」按钮。
-        //
-        // 三种状态必须**互斥且各自可辨**：
-        //   ① 空闲   → 可点，显示「开始处理」
-        //   ② 提交中 → 不可点，转圈 + 「正在创建任务…」（点击后到入队完成前的空档）
-        //   ③ 有任务 → 不可点，显示「有任务正在执行」
-        //
-        // 原先只有 ①/③：点下去到「有任务正在执行」之间没有任何变化，用户会
-        // 以为没点上，于是连点 —— 每次都真的入队一次，队列里堆一串重复任务。
-        // 加上 ② 之后这段空档可见，也就自然阻止了连点。
-        val isSubmitting = state.submitting
         Button(
             onClick = { vm.start() },
-            enabled = state.nativeReady && runningTask == null && !isSubmitting,
+            enabled = state.nativeReady && runningTask == null,
             modifier = Modifier.fillMaxWidth(),
         ) {
-            when {
-                isSubmitting -> {
-                    CircularProgressIndicator(
-                        modifier = Modifier.size(18.dp),
-                        strokeWidth = 2.dp,
-                        color = LocalContentColor.current,
-                    )
-                    Spacer(Modifier.width(8.dp))
-                    Text("正在创建任务…")
-                }
-
-                runningTask != null -> {
-                    Icon(Icons.Default.PlayArrow, null, Modifier.size(18.dp))
-                    Spacer(Modifier.width(8.dp))
-                    Text("有任务正在执行")
-                }
-
-                else -> {
-                    Icon(Icons.Default.PlayArrow, null, Modifier.size(18.dp))
-                    Spacer(Modifier.width(8.dp))
-                    Text("开始处理")
-                }
-            }
+            Icon(Icons.Default.PlayArrow, null, Modifier.size(18.dp))
+            Spacer(Modifier.width(8.dp))
+            Text(if (runningTask != null) "有任务正在执行" else "开始处理")
         }
 
         Spacer(Modifier.height(24.dp))

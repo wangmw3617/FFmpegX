@@ -14,7 +14,6 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Animation
-import androidx.compose.material.icons.filled.Cloud
 import androidx.compose.material.icons.filled.ContentCut
 import androidx.compose.material.icons.filled.Crop
 import androidx.compose.material.icons.filled.ExpandLess
@@ -78,7 +77,6 @@ import com.zhiwei.ffmpegx.ui.nav.SpeedRoute
 import com.zhiwei.ffmpegx.ui.nav.SubtitleRoute
 import com.zhiwei.ffmpegx.ui.nav.ThumbnailRoute
 import com.zhiwei.ffmpegx.ui.nav.TrimRoute
-import com.zhiwei.ffmpegx.ui.nav.WebDavRoute
 
 private data class ToolEntry(
     val label: String,
@@ -109,9 +107,6 @@ private val MORE_TOOLS = listOf(
     ToolEntry("水印画中画", "图片水印 / 分屏", Icons.Default.Layers, OverlayRoute),
     ToolEntry("媒体信息", "查看编码 / 分辨率等信息", Icons.Default.Info, ProbeRoute),
     ToolEntry("命令行", "直接写 ffmpeg 参数", Icons.Default.Terminal, RawCommandRoute),
-    // 放在最后而不是「常用」里：它不是转码功能，而是「素材从哪来 / 成品到哪去」，
-    // 与上面这些处理工具不是同一类，混在常用区会让人以为它也会产出一个文件。
-    ToolEntry("WebDAV 文件", "浏览网盘 / 下载素材 / 上传成品", Icons.Default.Cloud, WebDavRoute),
 )
 
 /**

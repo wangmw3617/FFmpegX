@@ -32,20 +32,6 @@
         android:name="android.hardware.vulkan.version"
         android:required="false" />
 
-    <!-- ========== 网络（WebDAV） ========== -->
-    <!--
-      仅用于 WebDAV：用户填入自己的服务器地址后上传/下载媒体文件。
-      App 自身不做任何联网、没有埋点、不上报、不检查更新。
-
-      ⚠️ 关于明文 HTTP：
-      没有加 `android:usesCleartextTraffic="true"`，也没有配 networkSecurityConfig
-      放行明文 —— 也就是**只允许 https**。这是刻意的：WebDAV 会把 Basic 认证头
-      （用户名:密码 的 base64）发出去，明文传输等于把凭据直接暴露在网络上。
-      真有自建服务器只有 http 的用户，宁可让他配个证书。
-    -->
-    <uses-permission android:name="android.permission.INTERNET" />
-    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
-
     <application
         android:name=".FFmpegXApp"
         android:allowBackup="true"
